@@ -1,46 +1,51 @@
 const express = require("express");
-const geoip = require("geoip-lite");
-
 const router = express.Router();
 
-router.get("/", (req, res) => {
-  let { city, state, lat, lon } = req.query;
+router.get("/", async (req, res) => {
+  try {
+    let { city, state, lat, lon } = req.query;
 
-  // Parse lat/lon properly
-  lat = lat ? Number(lat) : null;
-  lon = lon ? Number(lon) : null;
+    lat = lat ? Number(lat) : null;
+    lon = lon ? Number(lon) : null;
 
-  // Get client IP
-  const ip =
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.socket.remoteAddress;
+    // Get client IP
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress;
 
-  let geo = null;
+    let geo = null;
 
-  // If frontend did NOT send location → try IP-based lookup
-  if (!city && !state && (lat === null || lon === null)) {
-    geo = geoip.lookup(ip);
+    // If frontend didn't send location → use IP API
+    if (!city && !state && (lat === null || lon === null)) {
+      const response = await fetch(`https://ipapi.co/${ip}/json/`);
+      geo = await response.json();
 
-    if (geo) {
-      city = geo.city || null;
-      state = geo.region || null;
-
-      if (lat === null && geo.ll) lat = geo.ll[0];
-      if (lon === null && geo.ll) lon = geo.ll[1];
+      if (!geo.error) {
+        city = geo.city || null;
+        state = geo.region || null;
+        lat = geo.latitude || null;
+        lon = geo.longitude || null;
+      }
+    } else {
+      // Still fetch geo for reference
+      const response = await fetch(`https://ipapi.co/${ip}/json/`);
+      geo = await response.json();
     }
-  } else {
-    // Even if frontend sends data, still try IP geo for reference
-    geo = geoip.lookup(ip);
-  }
 
-  res.json({
-    ip,
-    city: city ?? "Unknown",
-    state: state ?? "Unknown",
-    lat: typeof lat === "number" && !isNaN(lat) ? lat : null,
-    lon: typeof lon === "number" && !isNaN(lon) ? lon : null,
-    geo, // complete geo object from geoip-lite
-  });
+    res.json({
+      ip,
+      city: city ?? "Unknown",
+      state: state ?? "Unknown",
+      lat,
+      lon,
+      geo, // FULL response from IP API
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to detect location",
+      message: error.message,
+    });
+  }
 });
 
 module.exports = router;
