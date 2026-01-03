@@ -8,19 +8,19 @@ router.get("/", async (req, res) => {
     lat = lat ? Number(lat) : null;
     lon = lon ? Number(lon) : null;
 
-    // Get client IP
+    // Get client IP (proxy safe)
     const ip =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.socket.remoteAddress;
 
     let geo = null;
 
-    // If frontend didn't send location → use IP API
+    // If frontend didn't send location → use IP lookup
     if (!city && !state && (lat === null || lon === null)) {
-      const response = await fetch(`https://ipapi.co/${ip}/json/`);
+      const response = await fetch(`https://ipwho.is/${ip}`);
       geo = await response.json();
 
-      if (!geo.error) {
+      if (geo.success) {
         city = geo.city || null;
         state = geo.region || null;
         lat = geo.latitude || null;
@@ -28,7 +28,7 @@ router.get("/", async (req, res) => {
       }
     } else {
       // Still fetch geo for reference
-      const response = await fetch(`https://ipapi.co/${ip}/json/`);
+      const response = await fetch(`https://ipwho.is/${ip}`);
       geo = await response.json();
     }
 
@@ -38,7 +38,7 @@ router.get("/", async (req, res) => {
       state: state ?? "Unknown",
       lat,
       lon,
-      geo, // FULL response from IP API
+      geo, // full ipwho.is response
     });
   } catch (error) {
     res.status(500).json({
