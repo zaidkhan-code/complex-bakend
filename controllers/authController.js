@@ -74,7 +74,7 @@ const registerBusiness = async (req, res) => {
   }
 };
 
-// @desc    Login user/business
+// @desc    Login user/business/admin
 // @route   POST /api/auth/login
 // @access  Public
 const login = async (req, res) => {
@@ -82,22 +82,24 @@ const login = async (req, res) => {
     const { email, password, type = "user" } = req.body;
 
     let account;
-    if (type === "business") {
-      account = await Business.findOne({ where: { email } });
-    } else {
-      account = await User.findOne({ where: { email } });
-    }
+    account = await Business.findOne({ where: { email } });
 
-    if (!account) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
+    console.log(
+      `✓ [LOGIN] Account found - Email: ${account.email}, Role: ${account.role}`
+    );
 
     if (account.isBlocked) {
+      console.log(`❌ [LOGIN] Account is blocked - Email: ${email}`);
       return res.status(403).json({ message: "Account is blocked" });
     }
 
     const isMatch = await account.matchPassword(password);
+    console.log(
+      `✓ [LOGIN] Password check - Match: ${isMatch}, Password length: ${password.length}`
+    );
+
     if (!isMatch) {
+      console.log(`❌ [LOGIN] Password mismatch - Email: ${email}`);
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -111,13 +113,18 @@ const login = async (req, res) => {
       response.name = account.name;
       response.phone = account.phone;
       response.category = account.category;
+    } else if (type === "admin") {
+      response.fullName = account.fullName;
+      response.role = account.role;
     } else {
       response.fullName = account.fullName;
       response.role = account.role;
     }
 
+    console.log(`✅ [LOGIN] Success - Email: ${email}, Type: ${type}`);
     res.json(response);
   } catch (error) {
+    console.error(`❌ [LOGIN] Error:`, error.message);
     res.status(500).json({ message: error.message });
   }
 };

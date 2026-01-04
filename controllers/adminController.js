@@ -1,7 +1,9 @@
-const User = require('../models/User');
-const Business = require('../models/Business');
-const Promotion = require('../models/Promotion');
-const { Op } = require('sequelize');
+const User = require("../models/User");
+const Business = require("../models/Business");
+const Promotion = require("../models/Promotion");
+const Template = require("../models/Template");
+const { Op } = require("sequelize");
+const { uploadImageToCloudinary } = require("../utils/cloudinaryUtils");
 
 // @desc    Get all users
 // @route   GET /api/admin/users
@@ -9,26 +11,26 @@ const { Op } = require('sequelize');
 const getAllUsers = async (req, res) => {
   try {
     const { search, role } = req.query;
-    
+
     const where = {};
-    
+
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
-        { email: { [Op.iLike]: `%${search}%` } }
+        { email: { [Op.iLike]: `%${search}%` } },
       ];
     }
-    
+
     if (role) {
       where.role = role;
     }
-    
+
     const users = await User.findAll({
       where,
-      attributes: { exclude: ['password'] },
-      order: [['createdAt', 'DESC']]
+      attributes: { exclude: ["password"] },
+      order: [["createdAt", "DESC"]],
     });
-    
+
     res.json(users);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -41,26 +43,26 @@ const getAllUsers = async (req, res) => {
 const getAllBusinesses = async (req, res) => {
   try {
     const { search, category } = req.query;
-    
+
     const where = {};
-    
+
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
-        { email: { [Op.iLike]: `%${search}%` } }
+        { email: { [Op.iLike]: `%${search}%` } },
       ];
     }
-    
+
     if (category) {
       where.category = category;
     }
-    
+
     const businesses = await Business.findAll({
       where,
-      attributes: { exclude: ['password'] },
-      order: [['createdAt', 'DESC']]
+      attributes: { exclude: ["password"] },
+      order: [["createdAt", "DESC"]],
     });
-    
+
     res.json(businesses);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -73,22 +75,22 @@ const getAllBusinesses = async (req, res) => {
 const toggleUserBlock = async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id);
-    
+
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: "User not found" });
     }
-    
+
     user.isBlocked = !user.isBlocked;
     await user.save();
-    
+
     res.json({
-      message: `User ${user.isBlocked ? 'blocked' : 'unblocked'} successfully`,
+      message: `User ${user.isBlocked ? "blocked" : "unblocked"} successfully`,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        isBlocked: user.isBlocked
-      }
+        isBlocked: user.isBlocked,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -101,22 +103,24 @@ const toggleUserBlock = async (req, res) => {
 const toggleBusinessBlock = async (req, res) => {
   try {
     const business = await Business.findByPk(req.params.id);
-    
+
     if (!business) {
-      return res.status(404).json({ message: 'Business not found' });
+      return res.status(404).json({ message: "Business not found" });
     }
-    
+
     business.isBlocked = !business.isBlocked;
     await business.save();
-    
+
     res.json({
-      message: `Business ${business.isBlocked ? 'blocked' : 'unblocked'} successfully`,
+      message: `Business ${
+        business.isBlocked ? "blocked" : "unblocked"
+      } successfully`,
       business: {
         id: business.id,
         name: business.name,
         email: business.email,
-        isBlocked: business.isBlocked
-      }
+        isBlocked: business.isBlocked,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -129,27 +133,29 @@ const toggleBusinessBlock = async (req, res) => {
 const getAllPromotions = async (req, res) => {
   try {
     const { status, category } = req.query;
-    
+
     const where = {};
-    
+
     if (status) {
       where.status = status;
     }
-    
+
     if (category) {
       where.category = category;
     }
-    
+
     const promotions = await Promotion.findAll({
       where,
-      include: [{
-        model: Business,
-        as: 'business',
-        attributes: ['name', 'email', 'category']
-      }],
-      order: [['createdAt', 'DESC']]
+      include: [
+        {
+          model: Business,
+          as: "business",
+          attributes: ["name", "email", "category"],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
     });
-    
+
     res.json(promotions);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -162,14 +168,14 @@ const getAllPromotions = async (req, res) => {
 const deletePromotion = async (req, res) => {
   try {
     const promotion = await Promotion.findByPk(req.params.id);
-    
+
     if (!promotion) {
-      return res.status(404).json({ message: 'Promotion not found' });
+      return res.status(404).json({ message: "Promotion not found" });
     }
-    
+
     await promotion.destroy();
-    
-    res.json({ message: 'Promotion deleted successfully' });
+
+    res.json({ message: "Promotion deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -183,14 +189,99 @@ const getAdminDashboard = async (req, res) => {
     const totalUsers = await User.count();
     const totalBusinesses = await Business.count();
     const totalPromotions = await Promotion.count();
-    const activePromotions = await Promotion.count({ where: { status: 'active' } });
-    
+    const activePromotions = await Promotion.count({
+      where: { status: "active" },
+    });
+
     res.json({
       totalUsers,
       totalBusinesses,
       totalPromotions,
-      activePromotions
+      activePromotions,
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Upload template image
+// @route   POST /api/admin/templates/upload
+// @access  Private (Admin)
+const uploadTemplateImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No image file provided" });
+    }
+
+    // Upload to Cloudinary
+    const cloudinaryResult = await uploadImageToCloudinary(
+      req.file.buffer,
+      "templates"
+    );
+
+    if (!cloudinaryResult.success) {
+      return res.status(500).json({
+        message: "Failed to upload image",
+        error: cloudinaryResult.error,
+      });
+    }
+
+    // Auto-generate template name from filename and timestamp
+    const fileNameWithoutExt = req.file.originalname.split(".")[0];
+    const timestamp = Date.now();
+    const templateName = `${fileNameWithoutExt}-${timestamp}`;
+
+    // Create template in database
+    const template = await Template.create({
+      name: templateName,
+      imageUrl: cloudinaryResult.data.url,
+      cloudinaryPublicId: cloudinaryResult.data.publicId,
+      isDefault: false,
+    });
+
+    res.status(201).json({
+      message: "Template uploaded successfully",
+      template: {
+        id: template.id,
+        name: template.name,
+        imageUrl: template.imageUrl,
+        cloudinaryPublicId: template.cloudinaryPublicId,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get all templates
+// @route   GET /api/admin/templates
+// @access  Public
+const getAllTemplates = async (req, res) => {
+  try {
+    const templates = await Template.findAll({
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.json(templates);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Delete template
+// @route   DELETE /api/admin/templates/:id
+// @access  Private (Admin)
+const deleteTemplate = async (req, res) => {
+  try {
+    const template = await Template.findByPk(req.params.id);
+
+    if (!template) {
+      return res.status(404).json({ message: "Template not found" });
+    }
+
+    await template.destroy();
+
+    res.json({ message: "Template deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -203,5 +294,8 @@ module.exports = {
   toggleBusinessBlock,
   getAllPromotions,
   deletePromotion,
-  getAdminDashboard
+  getAdminDashboard,
+  uploadTemplateImage,
+  getAllTemplates,
+  deleteTemplate,
 };

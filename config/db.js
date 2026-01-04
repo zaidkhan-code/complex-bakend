@@ -29,7 +29,7 @@ const connectDB = async () => {
 
     // ❗ IMPORTANT: NEVER sync in production on Vercel
     if (process.env.NODE_ENV === "development") {
-      await sequelize.sync({ alter: true });
+      // await sequelize.sync({ alter: true });
       console.log("Database synchronized");
     }
   } catch (error) {
