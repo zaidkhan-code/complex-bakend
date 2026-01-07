@@ -1,5 +1,6 @@
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
+const stripe = require("../config/stripe");
 const { Op } = require("sequelize");
 const { calculatePrice } = require("../utils/calculatePrice");
 const {
@@ -44,8 +45,53 @@ const createPromotion = async (req, res) => {
       status: "pending", // Will be activated after payment
     });
 
-    res.status(201).json(promotion);
+    console.log(
+      `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`
+    );
+
+    // Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Promotion Service",
+              description: `Promotion from ${promotion.runDate} to ${promotion.stopDate}`,
+            },
+            unit_amount: Math.round(promotion.price * 100), // Convert to cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: `${
+        process.env.FRONTEND_URL || "http://localhost:3000"
+      }/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${
+        process.env.FRONTEND_URL || "http://localhost:3000"
+      }/business/promotions/${promotion.id}`,
+      metadata: {
+        promotionId: promotion.id,
+        businessId: req.business.id,
+      },
+    });
+
+    console.log(
+      `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`
+    );
+
+    // Return promotion data with Stripe session info
+    res.status(201).json({
+      promotion,
+      stripeSession: {
+        sessionId: session.id,
+        url: session.url,
+      },
+    });
   } catch (error) {
+    console.error(`❌ [CREATE PROMOTION] Error:`, error.message);
     res.status(500).json({ message: error.message });
   }
 };
