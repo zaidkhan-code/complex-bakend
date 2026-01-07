@@ -1,8 +1,11 @@
-const Promotion = require('../models/Promotion');
-const Business = require('../models/Business');
-const { Op } = require('sequelize');
-const { calculatePrice } = require('../utils/calculatePrice');
-const { getDateRange } = require('../utils/dateUtils');
+const Promotion = require("../models/Promotion");
+const Business = require("../models/Business");
+const { Op } = require("sequelize");
+const { calculatePrice } = require("../utils/calculatePrice");
+const {
+  getDateRange,
+  calculateMonthsFromDateRange,
+} = require("../utils/dateUtils");
 
 // @desc    Create new promotion
 // @route   POST /api/business/promotions
@@ -14,43 +17,33 @@ const createPromotion = async (req, res) => {
       imageUrl,
       text,
       category,
-      city,
-      state,
+      cities = [],
+      states = [],
+      timezones = [],
       runDate,
       stopDate,
       runTime,
       stopTime,
-      month,
-      timezone
+      price, // Price calculated on frontend
     } = req.body;
-    
-    // Calculate price
-    const price = calculatePrice({
-      runDate,
-      stopDate,
-      runTime,
-      stopTime,
-      month
-    });
-    
+
     const promotion = await Promotion.create({
       businessId: req.business.id,
       templateId,
       imageUrl,
-      text: text || [],
-      category,
-      city,
-      state,
+      text: text ? text : "",
+      category: category || req.business.category,
+      cities,
+      states,
+      timezones,
       runDate,
       stopDate,
       runTime,
       stopTime,
-      month,
-      timezone,
       price,
-      status: 'pending' // Will be activated after payment
+      status: "pending", // Will be activated after payment
     });
-    
+
     res.status(201).json(promotion);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -64,9 +57,9 @@ const getBusinessPromotions = async (req, res) => {
   try {
     const promotions = await Promotion.findAll({
       where: { businessId: req.business.id },
-      order: [['createdAt', 'DESC']]
+      order: [["createdAt", "DESC"]],
     });
-    
+
     res.json(promotions);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -81,14 +74,14 @@ const updatePromotion = async (req, res) => {
     const promotion = await Promotion.findOne({
       where: {
         id: req.params.id,
-        businessId: req.business.id
-      }
+        businessId: req.business.id,
+      },
     });
-    
+
     if (!promotion) {
-      return res.status(404).json({ message: 'Promotion not found' });
+      return res.status(404).json({ message: "Promotion not found" });
     }
-    
+
     const {
       imageUrl,
       text,
@@ -100,9 +93,9 @@ const updatePromotion = async (req, res) => {
       runTime,
       stopTime,
       month,
-      timezone
+      timezone,
     } = req.body;
-    
+
     // Recalculate price if dates changed
     let newPrice = promotion.price;
     if (runDate || stopDate || runTime || stopTime || month) {
@@ -111,10 +104,10 @@ const updatePromotion = async (req, res) => {
         stopDate: stopDate || promotion.stopDate,
         runTime: runTime || promotion.runTime,
         stopTime: stopTime || promotion.stopTime,
-        month: month || promotion.month
+        month: month || promotion.month,
       });
     }
-    
+
     // Update fields
     if (imageUrl) promotion.imageUrl = imageUrl;
     if (text) promotion.text = text;
@@ -128,9 +121,9 @@ const updatePromotion = async (req, res) => {
     if (month) promotion.month = month;
     if (timezone) promotion.timezone = timezone;
     promotion.price = newPrice;
-    
+
     await promotion.save();
-    
+
     res.json(promotion);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -145,17 +138,17 @@ const deletePromotion = async (req, res) => {
     const promotion = await Promotion.findOne({
       where: {
         id: req.params.id,
-        businessId: req.business.id
-      }
+        businessId: req.business.id,
+      },
     });
-    
+
     if (!promotion) {
-      return res.status(404).json({ message: 'Promotion not found' });
+      return res.status(404).json({ message: "Promotion not found" });
     }
-    
+
     await promotion.destroy();
-    
-    res.json({ message: 'Promotion deleted' });
+
+    res.json({ message: "Promotion deleted" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -167,67 +160,94 @@ const deletePromotion = async (req, res) => {
 const getDashboard = async (req, res) => {
   try {
     const businessId = req.business.id;
-    
+
     // Get date ranges
-    const last7Days = getDateRange('week');
-    const lastMonth = getDateRange('month');
-    
+    const last7Days = getDateRange("week");
+    const lastMonth = getDateRange("month");
+
     // Last 7 days stats
     const last7DaysStats = await Promotion.findAll({
       where: {
         businessId,
         createdAt: {
-          [Op.gte]: last7Days.startDate
-        }
+          [Op.gte]: last7Days.startDate,
+        },
       },
       attributes: [
-        [Promotion.sequelize.fn('COUNT', Promotion.sequelize.col('id')), 'total'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('views')), 'totalViews'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('clicks')), 'totalClicks']
+        [
+          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
+          "total",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
+          "totalViews",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
+          "totalClicks",
+        ],
       ],
-      raw: true
+      raw: true,
     });
-    
+
     // Last month stats
     const lastMonthStats = await Promotion.findAll({
       where: {
         businessId,
         createdAt: {
-          [Op.gte]: lastMonth.startDate
-        }
+          [Op.gte]: lastMonth.startDate,
+        },
       },
       attributes: [
-        [Promotion.sequelize.fn('COUNT', Promotion.sequelize.col('id')), 'total'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('views')), 'totalViews'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('clicks')), 'totalClicks']
+        [
+          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
+          "total",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
+          "totalViews",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
+          "totalClicks",
+        ],
       ],
-      raw: true
+      raw: true,
     });
-    
+
     // Overall stats
     const overallStats = await Promotion.findAll({
       where: { businessId },
       attributes: [
-        [Promotion.sequelize.fn('COUNT', Promotion.sequelize.col('id')), 'total'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('views')), 'totalViews'],
-        [Promotion.sequelize.fn('SUM', Promotion.sequelize.col('clicks')), 'totalClicks']
+        [
+          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
+          "total",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
+          "totalViews",
+        ],
+        [
+          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
+          "totalClicks",
+        ],
       ],
-      raw: true
+      raw: true,
     });
-    
+
     // Active promotions
     const activePromotions = await Promotion.count({
       where: {
         businessId,
-        status: 'active'
-      }
+        status: "active",
+      },
     });
-    
+
     res.json({
       last7Days: last7DaysStats[0],
       lastMonth: lastMonthStats[0],
       overall: overallStats[0],
-      activePromotions
+      activePromotions,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -239,5 +259,5 @@ module.exports = {
   getBusinessPromotions,
   updatePromotion,
   deletePromotion,
-  getDashboard
+  getDashboard,
 };

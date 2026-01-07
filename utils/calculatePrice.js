@@ -1,10 +1,129 @@
-const BASE_PRICE_PER_DAY = parseFloat(process.env.BASE_PRICE_PER_DAY) || 10;
-
 /**
- * Get days in a specific month
+ * Calculate promotion price based on business category and selections
+ *
+ * PRICING RULES:
+ *
+ * Online Store (online-ecommerce):
+ *   - Base: $10 (includes 1 state)
+ *   - Additional states: $10 each
+ *   - Timezones: $30 each (Eastern: $50)
+ *   - Total = Base + Additional States + Timezones
+ *
+ * Physical Location (small, medium, large):
+ *   - Base: $10 (includes 2 cities) - ONLY if no states selected
+ *   - States: $20 each (replaces base when selected)
+ *   - Timezones: $60 each (Eastern: $100)
+ *   - Total = (Base OR States) + Timezones
  */
-const getDaysInMonth = (year, month) => {
-  return new Date(year, month, 0).getDate();
+
+const calculatePrice = ({
+  runDate,
+  stopDate,
+  runTime,
+  stopTime,
+  months,
+  cities = [],
+  states = [],
+  timezones = [],
+  businessType = "small", // 'online-ecommerce', 'small', 'medium', 'large'
+}) => {
+  try {
+    const isOnlineStore = businessType === "online-ecommerce";
+
+    let baseCost = 0;
+    let stateCost = 0;
+    let timezoneCost = 0;
+
+    // Check if Eastern timezone is selected
+    const hasEasternTimezone = timezones.some((tz) =>
+      tz.toLowerCase().includes("eastern")
+    );
+
+    if (isOnlineStore) {
+      // ===== ONLINE STORE PRICING =====
+
+      // Base plan: $10 (includes 1 state)
+      baseCost = 10;
+
+      // Additional states: $10 each (beyond the first)
+      const stateCount = states.length;
+      if (stateCount > 1) {
+        stateCost = (stateCount - 1) * 10;
+      }
+
+      // Timezones: $30 each, Eastern: $50
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          // Count non-Eastern timezones
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern")
+          ).length;
+          timezoneCost = nonEasternCount * 30 + 50;
+        } else {
+          timezoneCost = timezones.length * 30;
+        }
+      }
+    } else {
+      // ===== PHYSICAL LOCATION PRICING =====
+
+      const stateCount = states.length;
+
+      if (stateCount > 0) {
+        // If states selected: $20 per state (NO base $10)
+        stateCost = stateCount * 20;
+        baseCost = 0;
+      } else {
+        // No states: Starter plan $10 (includes 2 cities)
+        baseCost = 10;
+      }
+
+      // Timezones: $60 each, Eastern: $100
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          // Count non-Eastern timezones
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern")
+          ).length;
+          timezoneCost = nonEasternCount * 60 + 100;
+        } else {
+          timezoneCost = timezones.length * 60;
+        }
+      }
+    }
+
+    // Calculate subtotal (per month)
+    const subtotal = baseCost + stateCost + timezoneCost;
+
+    // Calculate total based on months
+    const effectiveMonths = months || 1;
+    const total = subtotal * effectiveMonths;
+
+    return {
+      subtotal,
+      total,
+      months: effectiveMonths,
+      breakdown: {
+        baseCost,
+        stateCost,
+        timezoneCost,
+        stateCount: states.length,
+        timezoneCount: timezones.length,
+        hasEasternTimezone,
+      },
+    };
+  } catch (error) {
+    console.error("Error calculating price:", error);
+    return {
+      subtotal: 10,
+      total: 10,
+      months: 1,
+      breakdown: {
+        baseCost: 10,
+        stateCost: 0,
+        timezoneCost: 0,
+      },
+    };
+  }
 };
 
 /**
@@ -14,62 +133,8 @@ const calculateDaysBetween = (startDate, endDate) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const diffTime = Math.abs(end - start);
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end dates
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   return diffDays;
 };
 
-/**
- * Calculate promotion price based on duration
- * @param {Object} params - Parameters for price calculation
- * @param {Date|string} params.runDate - Start date
- * @param {Date|string} params.stopDate - End date
- * @param {string} params.runTime - Start time (HH:MM format)
- * @param {string} params.stopTime - End time (HH:MM format)
- * @param {number} params.month - Month number (1-12) for month-specific pricing
- * @returns {number} - Calculated price
- */
-const calculatePrice = ({ runDate, stopDate, runTime, stopTime, month }) => {
-  try {
-    const days = calculateDaysBetween(runDate, stopDate);
-    
-    let price = days * BASE_PRICE_PER_DAY;
-    
-    // Apply month-specific multiplier if provided
-    if (month) {
-      const year = new Date(runDate).getFullYear();
-      const daysInMonth = getDaysInMonth(year, month);
-      
-      // Adjust price based on month length (shorter months = slightly higher per-day rate)
-      if (daysInMonth === 28 || daysInMonth === 29) {
-        price *= 1.1; // 10% increase for February
-      } else if (daysInMonth === 30) {
-        price *= 1.05; // 5% increase for 30-day months
-      }
-    }
-    
-    // Apply time-based adjustments
-    const runHour = parseInt(runTime.split(':')[0]);
-    const stopHour = parseInt(stopTime.split(':')[0]);
-    
-    // Peak hours (9 AM - 9 PM) get a 20% premium
-    if ((runHour >= 9 && runHour <= 21) || (stopHour >= 9 && stopHour <= 21)) {
-      price *= 1.2;
-    }
-    
-    // Discount for longer durations
-    if (days >= 30) {
-      price *= 0.85; // 15% discount for 30+ days
-    } else if (days >= 14) {
-      price *= 0.9; // 10% discount for 14-29 days
-    } else if (days >= 7) {
-      price *= 0.95; // 5% discount for 7-13 days
-    }
-    
-    return Math.round(price * 100) / 100; // Round to 2 decimal places
-  } catch (error) {
-    console.error('Error calculating price:', error);
-    return BASE_PRICE_PER_DAY;
-  }
-};
-
-module.exports = { calculatePrice, getDaysInMonth, calculateDaysBetween };
+module.exports = { calculatePrice, calculateDaysBetween };

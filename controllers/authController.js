@@ -42,7 +42,10 @@ const registerUser = async (req, res) => {
 // @access  Public
 const registerBusiness = async (req, res) => {
   try {
-    const { name, email, password, phone, category } = req.body;
+    const { name, email, password, phone, category, businessType } = req.body;
+    console.log(
+      `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}`
+    );
 
     // Check if business exists
     const businessExists = await Business.findOne({ where: { email } });
@@ -50,26 +53,37 @@ const registerBusiness = async (req, res) => {
       return res.status(400).json({ message: "Business already exists" });
     }
 
-    // Create business
+    // Create business with default businessType if not provided
     const business = await Business.create({
       name,
       email,
       password,
       phone,
       category,
+      businessType: businessType || "small", // Default to "small" if not provided
     });
 
+    console.log(
+      `✅ [REGISTER BUSINESS] Business created - ID: ${business.id}, BusinessType: ${business.businessType}`
+    );
+
     if (business) {
-      res.status(201).json({
+      const responseData = {
         id: business.id,
         name: business.name,
         email: business.email,
         phone: business.phone,
         category: business.category,
+        businessType: business.businessType, // Ensure it's always included
         token: generateToken(business.id, "business"),
-      });
+      };
+      console.log(
+        `✅ [REGISTER BUSINESS] Response - BusinessType: ${responseData.businessType}`
+      );
+      res.status(201).json(responseData);
     }
   } catch (error) {
+    console.error(`❌ [REGISTER BUSINESS] Error:`, error.message);
     res.status(500).json({ message: error.message });
   }
 };
@@ -80,12 +94,21 @@ const registerBusiness = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password, type = "user" } = req.body;
+    console.log(`📝 [LOGIN] Attempt - Email: ${email}, Type: ${type}`);
 
     let account;
     account = await Business.findOne({ where: { email } });
 
+    if (!account) {
+      console.log(`❌ [LOGIN] Account not found - Email: ${email}`);
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
     console.log(
       `✓ [LOGIN] Account found - Email: ${account.email}, Role: ${account.role}`
+    );
+    console.log(
+      `✓ [LOGIN] Account businessType from DB: ${account.businessType}`
     );
 
     if (account.isBlocked) {
@@ -113,6 +136,10 @@ const login = async (req, res) => {
       response.name = account.name;
       response.phone = account.phone;
       response.category = account.category;
+      response.businessType = account.businessType || "small"; // Default to "small" if not set
+      console.log(
+        `✅ [LOGIN] Business Response - BusinessType: ${response.businessType}`
+      );
     } else if (type === "admin") {
       response.fullName = account.fullName;
       response.role = account.role;

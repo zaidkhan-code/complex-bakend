@@ -41,8 +41,10 @@ const validateLogin = [
 // Promotion creation validation
 const validatePromotion = [
   body("imageUrl").trim().notEmpty().withMessage("Image URL is required"),
-  body("runDate").isDate().withMessage("Valid run date is required"),
-  body("stopDate").isDate().withMessage("Valid stop date is required"),
+  body("runDate").isISO8601().withMessage("Valid run date is required"),
+
+  body("stopDate").isISO8601().withMessage("Valid stop date is required"),
+
   body("runTime")
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
     .withMessage("Valid run time is required (HH:MM)"),
