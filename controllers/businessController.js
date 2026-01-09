@@ -49,6 +49,32 @@ const createPromotion = async (req, res) => {
       `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`
     );
 
+    // Format promotion details for Stripe description
+    const statesList =
+      states && states.length > 0
+        ? states.map((s) => `${s.name || s.code} (${s.code})`).join(", ")
+        : "No states selected";
+
+    const citiesList =
+      cities && cities.length > 0
+        ? cities.map((c) => c.name).join(", ")
+        : "No cities selected";
+
+    const timezonesList =
+      timezones && timezones.length > 0
+        ? timezones.join(", ")
+        : "No timezones selected";
+
+    const promotionDescription = `
+Promotion Details:
+States: ${statesList}
+ Cities: ${citiesList}
+ Timezones: ${timezonesList}
+ Date: ${promotion.runDate} to ${promotion.stopDate}
+ Time: ${promotion.runTime} to ${promotion.stopTime}
+Price: $${promotion.price}
+    `.trim();
+
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -58,7 +84,7 @@ const createPromotion = async (req, res) => {
             currency: "usd",
             product_data: {
               name: "Promotion Service",
-              description: `Promotion from ${promotion.runDate} to ${promotion.stopDate}`,
+              description: promotionDescription,
             },
             unit_amount: Math.round(promotion.price * 100), // Convert to cents
           },
@@ -68,13 +94,21 @@ const createPromotion = async (req, res) => {
       mode: "payment",
       success_url: `${
         process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      }/business/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${
         process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/promotions/${promotion.id}`,
+      }/business/promotions?payment_canceled=true&promotion_id=${promotion.id}`,
       metadata: {
         promotionId: promotion.id,
         businessId: req.business.id,
+        category: promotion.category,
+        states: JSON.stringify(states),
+        cities: JSON.stringify(cities),
+        timezones: JSON.stringify(timezones),
+        runDate: promotion.runDate,
+        stopDate: promotion.stopDate,
+        runTime: promotion.runTime,
+        stopTime: promotion.stopTime,
       },
     });
 
@@ -101,8 +135,34 @@ const createPromotion = async (req, res) => {
 // @access  Private (Business)
 const getBusinessPromotions = async (req, res) => {
   try {
+    const { search = "", status = "" } = req.query;
+
+    // Build where clause with search filter
+    const whereClause = {
+      businessId: req.business.id,
+    };
+
+    // If status query is provided, filter by status
+    if (status.trim()) {
+      const validStatuses = ["active", "inactive", "pending"];
+      if (validStatuses.includes(status.toLowerCase())) {
+        whereClause.status = status.toLowerCase();
+      }
+    }
+
+    // If search query is provided, filter by category
+    if (search.trim()) {
+      whereClause[Op.or] = [
+        {
+          category: {
+            [Op.iLike]: `%${search}%`,
+          },
+        },
+      ];
+    }
+
     const promotions = await Promotion.findAll({
-      where: { businessId: req.business.id },
+      where: whereClause,
       order: [["createdAt", "DESC"]],
     });
 
@@ -289,15 +349,118 @@ const getDashboard = async (req, res) => {
       },
     });
 
+    // Generate chart data for last 7 days (daily breakdown)
+    const last7DaysChartData = [];
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(last7Days.startDate);
+      date.setDate(date.getDate() + i);
+
+      const dayStats = await Promotion.findAll({
+        where: {
+          businessId,
+          createdAt: {
+            [Op.gte]: new Date(
+              date.getFullYear(),
+              date.getMonth(),
+              date.getDate()
+            ),
+            [Op.lt]: new Date(
+              date.getFullYear(),
+              date.getMonth(),
+              date.getDate() + 1
+            ),
+          },
+        },
+        attributes: [
+          [
+            Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
+            "views",
+          ],
+        ],
+        raw: true,
+      });
+
+      last7DaysChartData.push({
+        day: days[date.getDay()],
+        views: dayStats[0]?.views || 0,
+      });
+    }
+
+    // Generate chart data for last 30 days (weekly breakdown)
+    const last30DaysChartData = [];
+    for (let week = 0; week < 4; week++) {
+      const weekStart = new Date(lastMonth.startDate);
+      weekStart.setDate(weekStart.getDate() + week * 7);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+
+      const weekStats = await Promotion.findAll({
+        where: {
+          businessId,
+          createdAt: {
+            [Op.gte]: weekStart,
+            [Op.lt]: weekEnd,
+          },
+        },
+        attributes: [
+          [
+            Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
+            "views",
+          ],
+        ],
+        raw: true,
+      });
+
+      last30DaysChartData.push({
+        week: `Week ${week + 1}`,
+        views: weekStats[0]?.views || 0,
+      });
+    }
+
+    // Calculate momentum score based on recent activity
+    const momentum = {
+      score: calculateMomentumScore(
+        last7DaysStats[0]?.totalViews || 0,
+        activePromotions
+      ),
+      level: getMomentumLevel(
+        calculateMomentumScore(
+          last7DaysStats[0]?.totalViews || 0,
+          activePromotions
+        )
+      ),
+      message: "Keep running promotions frequently to maintain high momentum",
+    };
+
     res.json({
       last7Days: last7DaysStats[0],
       lastMonth: lastMonthStats[0],
       overall: overallStats[0],
       activePromotions,
+      chartData: {
+        last7Days: last7DaysChartData,
+        last30Days: last30DaysChartData,
+        momentum,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
+};
+
+// Helper function to calculate momentum score
+const calculateMomentumScore = (views, activePromotions) => {
+  const baseScore = Math.min(views / 10, 50); // Max 50 from views
+  const promoBonus = activePromotions * 10; // 10 points per active promotion
+  return Math.min(baseScore + promoBonus, 100);
+};
+
+// Helper function to get momentum level
+const getMomentumLevel = (score) => {
+  if (score >= 70) return "High";
+  if (score >= 40) return "Medium";
+  return "Low";
 };
 
 module.exports = {
