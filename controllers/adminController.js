@@ -209,44 +209,39 @@ const getAdminDashboard = async (req, res) => {
 // @access  Private (Admin)
 const uploadTemplateImage = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "No image file provided" });
+    if (!req.files || !req.files.length) {
+      return res.status(400).json({ message: "No images provided" });
     }
 
-    // Upload to Cloudinary
-    const cloudinaryResult = await uploadImageToCloudinary(
-      req.file.buffer,
-      "templates"
-    );
+    const createdTemplates = [];
 
-    if (!cloudinaryResult.success) {
-      return res.status(500).json({
-        message: "Failed to upload image",
-        error: cloudinaryResult.error,
+    for (const file of req.files) {
+      const cloudinaryResult = await uploadImageToCloudinary(
+        file.buffer,
+        "templates"
+      );
+
+      if (!cloudinaryResult.success) continue;
+
+      const name = `${file.originalname.split(".")[0]}-${Date.now()}`;
+
+      const template = await Template.create({
+        name,
+        imageUrl: cloudinaryResult.data.url,
+        cloudinaryPublicId: cloudinaryResult.data.publicId,
+        isDefault: false,
       });
-    }
 
-    // Auto-generate template name from filename and timestamp
-    const fileNameWithoutExt = req.file.originalname.split(".")[0];
-    const timestamp = Date.now();
-    const templateName = `${fileNameWithoutExt}-${timestamp}`;
-
-    // Create template in database
-    const template = await Template.create({
-      name: templateName,
-      imageUrl: cloudinaryResult.data.url,
-      cloudinaryPublicId: cloudinaryResult.data.publicId,
-      isDefault: false,
-    });
-
-    res.status(201).json({
-      message: "Template uploaded successfully",
-      template: {
+      createdTemplates.push({
         id: template.id,
         name: template.name,
         imageUrl: template.imageUrl,
-        cloudinaryPublicId: template.cloudinaryPublicId,
-      },
+      });
+    }
+
+    res.status(201).json({
+      message: "Templates uploaded successfully",
+      templates: createdTemplates,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

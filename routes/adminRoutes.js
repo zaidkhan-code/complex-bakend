@@ -17,15 +17,13 @@ const { protect, adminOnly } = require("../middleware/authMiddleware");
 
 // Configure multer for image uploads
 const storage = multer.memoryStorage();
+
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed"));
-    }
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files allowed"));
   },
 });
 
@@ -39,9 +37,12 @@ router.put("/users/:id/block", toggleUserBlock);
 router.put("/businesses/:id/block", toggleBusinessBlock);
 router.get("/promotions", getAllPromotions);
 router.delete("/promotions/:id", deletePromotion);
+router.post(
+  "/templates/upload",
+  upload.array("images", 10), // <-- MULTIPLE FILES
+  uploadTemplateImage
+);
 
-// Template routes
-router.post("/templates/upload", upload.single("image"), uploadTemplateImage);
 router.get("/templates", getAllTemplates);
 router.delete("/templates/:id", deleteTemplate);
 
