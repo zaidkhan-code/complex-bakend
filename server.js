@@ -3,19 +3,6 @@ const { connectDB, sequelize } = require("./config/db");
 const { startCronJobs } = require("./config/cronJobs");
 require("dotenv").config();
 
-// Models
-const User = require("./models/User");
-const Business = require("./models/Business");
-const Template = require("./models/Template");
-const Promotion = require("./models/Promotion");
-
-// Define associations
-Business.hasMany(Promotion, { foreignKey: "businessId", as: "promotions" });
-Promotion.belongsTo(Business, { foreignKey: "businessId", as: "business" });
-
-Template.hasMany(Promotion, { foreignKey: "templateId", as: "promotions" });
-Promotion.belongsTo(Template, { foreignKey: "templateId", as: "template" });
-
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
