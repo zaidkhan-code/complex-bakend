@@ -35,40 +35,32 @@ const Business = sequelize.define(
       allowNull: false,
       defaultValue: "small",
     },
-    category: {
-      type: DataTypes.ENUM(
-        "Restaurants",
-        "Beauty & Spas",
-        "Home & Garden",
-        "Coffee & Tea",
-        "Food",
-        "Auto Services",
-        "Pets",
-        "Professional Services",
-        "Health & Medical",
-        "Event Planning & Services",
-        "Hotels & Casinos",
-        "Nightlife",
-        "Active Life",
-        "Education",
-        "Arts & Entertainment",
-        "Travel & Activities",
-        "Online Shopping",
-        "Shopping",
-        "Real Estate",
-        "Mass Media",
-        "General Merchandise Store"
-      ),
-      allowNull: false,
-      defaultValue: "Restaurants", // ✅ VERY IMPORTANT
+    categories: {
+      type: DataTypes.JSONB,
+      defaultValue: [],
+      comment: "Array of selected categories (max 2)",
     },
-
+    personName: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "Contact person name",
+    },
+    businessAddress: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: "Full business address",
+    },
     state: {
       type: DataTypes.STRING,
     },
-    isBlocked: {
+    autoApprovePromotions: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
+      comment: "If true, all promotions from this business are auto-approved",
+    },
+    status: {
+      type: DataTypes.ENUM("active", "inactive", "blocked", "suspended"),
+      defaultValue: "active",
     },
   },
   {

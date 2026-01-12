@@ -25,13 +25,13 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
 const connectDB = async () => {
   try {
     await sequelize.authenticate();
+    // await sequelize.sync({ alter: true }); // ✅ alter mode to update schema with new fields
+    console.log("Database synchronized ✅");
     console.log("PostgreSQL connected successfully ✅");
 
     // ❗ IMPORTANT: NEVER sync in production on Vercel
-    if (process.env.NODE_ENV === "development") {
-      // await sequelize.sync({ alter: true }); // ✅ alter mode to update schema
-      console.log("Database synchronized");
-    }
+    // if (process.env.NODE_ENV === "development") {
+    // }
   } catch (error) {
     console.error("Unable to connect to database ❌", error);
     process.exit(1);

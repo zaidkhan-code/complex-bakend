@@ -1,5 +1,5 @@
-const stripe = require('../config/stripe');
-const Promotion = require('../models/Promotion');
+const stripe = require("../config/stripe");
+const Promotion = require("../models/Promotion");
 
 // @desc    Create Stripe checkout session
 // @route   POST /api/payment/stripe
@@ -7,31 +7,31 @@ const Promotion = require('../models/Promotion');
 const createCheckoutSession = async (req, res) => {
   try {
     const { promotionId } = req.body;
-    
+
     const promotion = await Promotion.findOne({
       where: {
         id: promotionId,
-        businessId: req.business.id
-      }
+        businessId: req.business.id,
+      },
     });
-    
+
     if (!promotion) {
-      return res.status(404).json({ message: 'Promotion not found' });
+      return res.status(404).json({ message: "Promotion not found" });
     }
-    
-    if (promotion.status === 'active') {
-      return res.status(400).json({ message: 'Promotion is already active' });
+
+    if (promotion.status === "active") {
+      return res.status(400).json({ message: "Promotion is already active" });
     }
-    
+
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ["card"],
       line_items: [
         {
           price_data: {
-            currency: 'usd',
+            currency: "usd",
             product_data: {
-              name: 'Promotion Service',
+              name: "Promotion Service",
               description: `Promotion from ${promotion.runDate} to ${promotion.stopDate}`,
             },
             unit_amount: Math.round(promotion.price * 100), // Convert to cents
@@ -39,15 +39,19 @@ const createCheckoutSession = async (req, res) => {
           quantity: 1,
         },
       ],
-      mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/business/promotions/${promotionId}`,
+      mode: "payment",
+      success_url: `${
+        process.env.FRONTEND_URL || "http://localhost:3000"
+      }/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${
+        process.env.FRONTEND_URL || "http://localhost:3000"
+      }/business/promotions/${promotionId}`,
       metadata: {
         promotionId: promotion.id,
-        businessId: req.business.id
-      }
+        businessId: req.business.id,
+      },
     });
-    
+
     res.json({ sessionId: session.id, url: session.url });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -58,10 +62,10 @@ const createCheckoutSession = async (req, res) => {
 // @route   POST /api/payment/webhook
 // @access  Public (Stripe)
 const handleWebhook = async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  
+  const sig = req.headers["stripe-signature"];
+
   let event;
-  
+
   try {
     event = stripe.webhooks.constructEvent(
       req.body,
@@ -69,30 +73,51 @@ const handleWebhook = async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
+    console.error("Webhook signature verification failed:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-  
+
   // Handle the event
-  if (event.type === 'checkout.session.completed') {
+  if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    
+
     try {
-      // Activate the promotion
+      const Business = require("../models/Business");
+
+      // Get promotion and business info
       const promotion = await Promotion.findByPk(session.metadata.promotionId);
-      
+
       if (promotion) {
-        promotion.status = 'active';
+        // Update payment status
+        promotion.paymentStatus = "completed";
         promotion.stripePaymentId = session.payment_intent;
+
+        // Check if business has auto-approval enabled
+        const business = await Business.findByPk(promotion.businessId);
+
+        if (business && business.autoApprovePromotions) {
+          // Auto-approve: set to active immediately
+          promotion.status = "active";
+          promotion.approvedAt = new Date();
+          console.log(
+            `✅ [PAYMENT] Promotion ${promotion.id} auto-activated (business has auto-approve enabled)`
+          );
+        } else {
+          // Default: set to pending, will be activated after 24 hours or by admin
+          promotion.status = "pending";
+          console.log(
+            `⏳ [PAYMENT] Promotion ${promotion.id} set to pending (admin approval required or 24-hour auto-activation)`
+          );
+        }
+
         await promotion.save();
-        
-        console.log(`Promotion ${promotion.id} activated after payment`);
+        console.log(`✅ [PAYMENT] Promotion ${promotion.id} payment completed`);
       }
     } catch (error) {
-      console.error('Error activating promotion:', error);
+      console.error("Error processing promotion after payment:", error);
     }
   }
-  
+
   res.json({ received: true });
 };
 
@@ -101,19 +126,21 @@ const handleWebhook = async (req, res) => {
 // @access  Private (Business)
 const verifyPayment = async (req, res) => {
   try {
-    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
-    
-    if (session.payment_status === 'paid') {
+    const session = await stripe.checkout.sessions.retrieve(
+      req.params.sessionId
+    );
+
+    if (session.payment_status === "paid") {
       const promotion = await Promotion.findByPk(session.metadata.promotionId);
-      
+
       res.json({
         paid: true,
-        promotion
+        promotion,
       });
     } else {
       res.json({
         paid: false,
-        status: session.payment_status
+        status: session.payment_status,
       });
     }
   } catch (error) {
@@ -124,5 +151,5 @@ const verifyPayment = async (req, res) => {
 module.exports = {
   createCheckoutSession,
   handleWebhook,
-  verifyPayment
+  verifyPayment,
 };

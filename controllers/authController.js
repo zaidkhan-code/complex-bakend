@@ -42,9 +42,20 @@ const registerUser = async (req, res) => {
 // @access  Public
 const registerBusiness = async (req, res) => {
   try {
-    const { name, email, password, phone, category, businessType } = req.body;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      categories,
+      businessType,
+      personName,
+      businessAddress,
+    } = req.body;
     console.log(
-      `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}`
+      `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}, Categories: ${JSON.stringify(
+        categories
+      )}`
     );
 
     // Check if business exists
@@ -53,14 +64,24 @@ const registerBusiness = async (req, res) => {
       return res.status(400).json({ message: "Business already exists" });
     }
 
-    // Create business with default businessType if not provided
+    // Validate categories (max 2)
+    if (!categories || categories.length === 0 || categories.length > 2) {
+      return res.status(400).json({
+        message: "Please select 1 or 2 business categories",
+      });
+    }
+
+    // Create business with all fields
     const business = await Business.create({
       name,
       email,
       password,
       phone,
-      category,
-      businessType: businessType || "small", // Default to "small" if not provided
+      categories: categories, // Store as JSON array
+      businessType: businessType || "small",
+      personName: personName || null,
+      businessAddress: businessAddress || null,
+      autoApprovePromotions: false, // Default: admin must approve
     });
 
     console.log(
@@ -73,8 +94,10 @@ const registerBusiness = async (req, res) => {
         name: business.name,
         email: business.email,
         phone: business.phone,
-        category: business.category,
-        businessType: business.businessType, // Ensure it's always included
+        categories: business.categories,
+        businessType: business.businessType,
+        personName: business.personName,
+        businessAddress: business.businessAddress,
         token: generateToken(business.id, "business"),
       };
       console.log(

@@ -263,185 +263,63 @@ const deletePromotion = async (req, res) => {
 // @desc    Get business dashboard statistics
 // @route   GET /api/business/dashboard
 // @access  Private (Business)
+const clamp = (value, max) => Math.min(value, max);
+
+const monthsBetween = (start, end) =>
+  Math.max(
+    1,
+    (end.getFullYear() - start.getFullYear()) * 12 +
+      (end.getMonth() - start.getMonth())
+  );
+
 const getDashboard = async (req, res) => {
   try {
     const businessId = req.business.id;
+    const now = new Date();
 
-    // Get date ranges
-    const last7Days = getDateRange("week");
-    const lastMonth = getDateRange("month");
+    // Date ranges
+    const last7Days = new Date();
+    last7Days.setDate(now.getDate() - 7);
 
-    // Last 7 days stats
-    const last7DaysStats = await Promotion.findAll({
-      where: {
-        businessId,
-        createdAt: {
-          [Op.gte]: last7Days.startDate,
-        },
-      },
-      attributes: [
-        [
-          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
-          "total",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
-          "totalViews",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
-          "totalClicks",
-        ],
-      ],
-      raw: true,
+    const last30Days = new Date();
+    last30Days.setDate(now.getDate() - 30);
+
+    // Counts
+    const weeklyCount = await Promotion.count({
+      where: { businessId, createdAt: { [Op.gte]: last7Days } },
     });
 
-    // Last month stats
-    const lastMonthStats = await Promotion.findAll({
-      where: {
-        businessId,
-        createdAt: {
-          [Op.gte]: lastMonth.startDate,
-        },
-      },
-      attributes: [
-        [
-          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
-          "total",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
-          "totalViews",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
-          "totalClicks",
-        ],
-      ],
-      raw: true,
+    const monthlyCount = await Promotion.count({
+      where: { businessId, createdAt: { [Op.gte]: last30Days } },
     });
 
-    // Overall stats
-    const overallStats = await Promotion.findAll({
-      where: { businessId },
-      attributes: [
-        [
-          Promotion.sequelize.fn("COUNT", Promotion.sequelize.col("id")),
-          "total",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
-          "totalViews",
-        ],
-        [
-          Promotion.sequelize.fn("SUM", Promotion.sequelize.col("clicks")),
-          "totalClicks",
-        ],
-      ],
-      raw: true,
-    });
-
-    // Active promotions
+    const totalPromotions = await Promotion.count({ where: { businessId } });
     const activePromotions = await Promotion.count({
-      where: {
-        businessId,
-        status: "active",
-      },
+      where: { businessId, status: "active" },
     });
 
-    // Generate chart data for last 7 days (daily breakdown)
-    const last7DaysChartData = [];
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(last7Days.startDate);
-      date.setDate(date.getDate() + i);
-
-      const dayStats = await Promotion.findAll({
-        where: {
-          businessId,
-          createdAt: {
-            [Op.gte]: new Date(
-              date.getFullYear(),
-              date.getMonth(),
-              date.getDate()
-            ),
-            [Op.lt]: new Date(
-              date.getFullYear(),
-              date.getMonth(),
-              date.getDate() + 1
-            ),
-          },
-        },
-        attributes: [
-          [
-            Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
-            "views",
-          ],
-        ],
-        raw: true,
-      });
-
-      last7DaysChartData.push({
-        day: days[date.getDay()],
-        views: dayStats[0]?.views || 0,
-      });
-    }
-
-    // Generate chart data for last 30 days (weekly breakdown)
-    const last30DaysChartData = [];
-    for (let week = 0; week < 4; week++) {
-      const weekStart = new Date(lastMonth.startDate);
-      weekStart.setDate(weekStart.getDate() + week * 7);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 7);
-
-      const weekStats = await Promotion.findAll({
-        where: {
-          businessId,
-          createdAt: {
-            [Op.gte]: weekStart,
-            [Op.lt]: weekEnd,
-          },
-        },
-        attributes: [
-          [
-            Promotion.sequelize.fn("SUM", Promotion.sequelize.col("views")),
-            "views",
-          ],
-        ],
-        raw: true,
-      });
-
-      last30DaysChartData.push({
-        week: `Week ${week + 1}`,
-        views: weekStats[0]?.views || 0,
-      });
-    }
-
-    // Calculate momentum score based on recent activity
-    const momentum = {
-      score: calculateMomentumScore(
-        last7DaysStats[0]?.totalViews || 0,
-        activePromotions
-      ),
-      level: getMomentumLevel(
-        calculateMomentumScore(
-          last7DaysStats[0]?.totalViews || 0,
-          activePromotions
-        )
-      ),
-      message: "Keep running promotions frequently to maintain high momentum",
-    };
+    let momentumScore = clamp(Math.floor((totalPromotions / 25) * 100), 100); // simple scaling
+    let momentumLevel = "Low";
+    if (momentumScore >= 70) momentumLevel = "High";
+    else if (momentumScore >= 40) momentumLevel = "Medium";
 
     res.json({
-      last7Days: last7DaysStats[0],
-      lastMonth: lastMonthStats[0],
-      overall: overallStats[0],
-      activePromotions,
-      chartData: {
-        last7Days: last7DaysChartData,
-        last30Days: last30DaysChartData,
-        momentum,
+      response: {
+        stats: { totalPromotions, activePromotions },
+        chartData: {
+          weekly: weeklyCount,
+          monthly: monthlyCount,
+          momentum: {
+            score: momentumScore,
+            level: momentumLevel,
+            message:
+              momentumLevel === "High"
+                ? "Excellent promotion consistency 🚀"
+                : momentumLevel === "Medium"
+                ? "Keep up the momentum!"
+                : "Run promotions more frequently to improve momentum",
+          },
+        },
       },
     });
   } catch (error) {

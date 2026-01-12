@@ -5,9 +5,13 @@ const {
   getAllUsers,
   getAllBusinesses,
   toggleUserBlock,
+  updateUserStatus,
   toggleBusinessBlock,
+  updateBusinessStatus,
   getAllPromotions,
   deletePromotion,
+  changePromotionStatus,
+  toggleBusinessAutoApprove,
   getAdminDashboard,
   uploadTemplateImage,
   getAllTemplates,
@@ -27,22 +31,35 @@ const upload = multer({
   },
 });
 
-// router.use(protect);
-// router.use(adminOnly);
+router.use(protect);
+router.use(adminOnly);
 
+// Dashboard
 router.get("/dashboard", getAdminDashboard);
+
+// Users
 router.get("/users", getAllUsers);
+router.put("/users/:id/status", updateUserStatus);
+
+// Businesses
 router.get("/businesses", getAllBusinesses);
-router.put("/users/:id/block", toggleUserBlock);
-router.put("/businesses/:id/block", toggleBusinessBlock);
+router.put("/businesses/:id/status", updateBusinessStatus);
+router.put(
+  "/businesses/:businessId/toggle-auto-approve",
+  toggleBusinessAutoApprove
+);
+
+// Promotions
 router.get("/promotions", getAllPromotions);
 router.delete("/promotions/:id", deletePromotion);
+router.put("/promotions/:promotionId/status", changePromotionStatus);
+
+// Templates
 router.post(
   "/templates/upload",
   upload.array("images", 10), // <-- MULTIPLE FILES
   uploadTemplateImage
 );
-
 router.get("/templates", getAllTemplates);
 router.delete("/templates/:id", deleteTemplate);
 

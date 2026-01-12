@@ -81,6 +81,22 @@ const Promotion = sequelize.define(
       type: DataTypes.ENUM("active", "inactive", "pending"),
       defaultValue: "pending",
     },
+    autoApprove: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment:
+        "If true, promotion will be auto-activated after 24 hours (can be overridden by admin)",
+    },
+    approvedAt: {
+      type: DataTypes.DATE,
+      comment:
+        "Timestamp when promotion was approved/activated by admin or auto-activated",
+    },
+    paymentStatus: {
+      type: DataTypes.ENUM("pending", "completed", "failed"),
+      defaultValue: "pending",
+      comment: "Payment status from Stripe",
+    },
     views: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
