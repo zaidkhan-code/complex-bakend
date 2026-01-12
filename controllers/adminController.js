@@ -239,22 +239,7 @@ const getAllPromotions = async (req, res) => {
     });
 
     res.json({
-      promotions: promotions.map((promo) => ({
-        id: promo.id,
-        businessId: promo.businessId,
-        business: promo.business,
-        category: promo.category,
-        status: promo.status,
-        price: promo.price,
-        runDate: promo.runDate,
-        stopDate: promo.stopDate,
-        imageUrl: promo.imageUrl,
-        views: promo.views,
-        clicks: promo.clicks,
-        createdAt: promo.createdAt,
-        updatedAt: promo.updatedAt,
-        businessAutoApprove: promo.business?.autoApprovePromotions || false,
-      })),
+      promotions: promotions,
       pagination: {
         total: count,
         pages: Math.ceil(count / limit),
