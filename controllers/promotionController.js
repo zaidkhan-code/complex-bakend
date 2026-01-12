@@ -127,7 +127,7 @@ const calculatePromotionPrice = async (req, res) => {
 const getTemplates = async (req, res) => {
   try {
     const templates = await Template.findAll({
-      where: { isDefault: true },
+      order: [["createdAt", "DESC"]],
     });
 
     res.json(templates);
