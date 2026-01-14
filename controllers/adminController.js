@@ -469,9 +469,9 @@ const changePromotionStatus = async (req, res) => {
     const { promotionId } = req.params;
     const { status } = req.body;
 
-    if (!["active", "inactive", "pending"].includes(status)) {
+    if (![, "inactive", "pending"].includes(status)) {
       return res.status(400).json({
-        message: "Invalid status. Must be one of: active, inactive, pending",
+        message: "Invalid status. Must be one of:  inactive, pending",
       });
     }
 
@@ -493,7 +493,7 @@ const changePromotionStatus = async (req, res) => {
     promotion.status = status;
 
     // Set approvedAt timestamp when admin approves
-    if (status === "active" && oldStatus !== "active") {
+    if (status === "inactive" && oldStatus == "pending") {
       promotion.approvedAt = new Date();
     }
 
@@ -547,14 +547,42 @@ const toggleBusinessAutoApprove = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+const approvePromotion = async (req, res) => {
+  try {
+    const { promotionId } = req.params;
 
+    const promotion = await Promotion.findByPk(promotionId, {
+      include: [{ model: Business, as: "business" }],
+    });
+
+    if (!promotion) {
+      return res.status(404).json({ message: "Promotion not found" });
+    }
+
+    if (promotion.status !== "pending") {
+      return res
+        .status(400)
+        .json({ message: "Only pending promotions can be approved" });
+    }
+
+    promotion.status = "inactive"; // Approved but NOT active
+    promotion.approvedAt = new Date();
+    await promotion.save();
+
+    console.log(`✅ [ADMIN] Promotion ${promotion.id} approved`);
+    res.json({ message: "Promotion approved", promotion });
+  } catch (error) {
+    console.error("Error approving promotion:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
 module.exports = {
   getAllUsers,
   updateUserStatus,
   changePromotionStatus,
   toggleBusinessAutoApprove,
   getAllBusinesses,
-
+  approvePromotion,
   updateBusinessStatus,
 
   getAllPromotions,

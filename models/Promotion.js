@@ -33,6 +33,11 @@ const Promotion = sequelize.define(
       defaultValue: [],
       comment: "Array of text objects with content, x, y, color, fontSize",
     },
+    backgroundColor: {
+      type: DataTypes.STRING,
+      defaultValue: "",
+      comment: "Background color for the promotion card",
+    },
     category: {
       type: DataTypes.STRING,
     },
@@ -78,7 +83,7 @@ const Promotion = sequelize.define(
       allowNull: false,
     },
     status: {
-      type: DataTypes.ENUM("active", "inactive", "pending"),
+      type: DataTypes.ENUM("active", "inactive", "pending", "expired"),
       defaultValue: "pending",
     },
     autoApprove: {

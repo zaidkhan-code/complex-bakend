@@ -17,6 +17,7 @@ const createPromotion = async (req, res) => {
       templateId,
       imageUrl,
       text,
+      backgroundColor,
       category,
       cities = [],
       states = [],
@@ -32,7 +33,8 @@ const createPromotion = async (req, res) => {
       businessId: req.business.id,
       templateId,
       imageUrl,
-      text: text ? text : "",
+      text: text ? (Array.isArray(text) ? text : [text]) : [],
+      backgroundColor: backgroundColor || "",
       category: category || req.business.category,
       cities,
       states,
@@ -172,6 +174,28 @@ const getBusinessPromotions = async (req, res) => {
   }
 };
 
+const getPromotionById = async (req, res) => {
+  try {
+    const { promotionId } = req.params; // get promotion ID from URL
+
+    // Find promotion belonging to the logged-in business
+    const promotion = await Promotion.findOne({
+      where: {
+        id: promotionId,
+        businessId: req.business.id, // ensure it belongs to the business
+      },
+    });
+
+    if (!promotion) {
+      return res.status(404).json({ message: "Promotion not found" });
+    }
+
+    res.json(promotion); // return promotion data
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Update promotion
 // @route   PUT /api/business/promotions/:id
 // @access  Private (Business)
@@ -188,49 +212,36 @@ const updatePromotion = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    const {
-      imageUrl,
-      text,
-      category,
-      city,
-      state,
-      runDate,
-      stopDate,
-      runTime,
-      stopTime,
-      month,
-      timezone,
-    } = req.body;
+    const { imageUrl, text, backgroundColor, runTime, stopTime } = req.body;
 
-    // Recalculate price if dates changed
-    let newPrice = promotion.price;
-    if (runDate || stopDate || runTime || stopTime || month) {
-      newPrice = calculatePrice({
-        runDate: runDate || promotion.runDate,
-        stopDate: stopDate || promotion.stopDate,
-        runTime: runTime || promotion.runTime,
-        stopTime: stopTime || promotion.stopTime,
-        month: month || promotion.month,
-      });
+    // Allow editing: image, text (content & styling), background color, runTime, stopTime
+    // Location, state, runDate, stopDate cannot be changed
+    if (imageUrl) {
+      promotion.imageUrl = imageUrl;
     }
 
-    // Update fields
-    if (imageUrl) promotion.imageUrl = imageUrl;
-    if (text) promotion.text = text;
-    if (category) promotion.category = category;
-    if (city) promotion.city = city;
-    if (state) promotion.state = state;
-    if (runDate) promotion.runDate = runDate;
-    if (stopDate) promotion.stopDate = stopDate;
-    if (runTime) promotion.runTime = runTime;
-    if (stopTime) promotion.stopTime = stopTime;
-    if (month) promotion.month = month;
-    if (timezone) promotion.timezone = timezone;
-    promotion.price = newPrice;
+    if (text) {
+      promotion.text = Array.isArray(text) ? text : [text];
+    }
+
+    if (backgroundColor !== undefined) {
+      promotion.backgroundColor = backgroundColor;
+    }
+
+    if (runTime) {
+      promotion.runTime = runTime;
+    }
+
+    if (stopTime) {
+      promotion.stopTime = stopTime;
+    }
 
     await promotion.save();
 
-    res.json(promotion);
+    res.json({
+      message: "Promotion updated successfully",
+      promotion,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -264,13 +275,6 @@ const deletePromotion = async (req, res) => {
 // @route   GET /api/business/dashboard
 // @access  Private (Business)
 const clamp = (value, max) => Math.min(value, max);
-
-const monthsBetween = (start, end) =>
-  Math.max(
-    1,
-    (end.getFullYear() - start.getFullYear()) * 12 +
-      (end.getMonth() - start.getMonth())
-  );
 
 const getDashboard = async (req, res) => {
   try {
@@ -326,25 +330,101 @@ const getDashboard = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+const activatePromotion = async (req, res) => {
+  try {
+    const { promotionId } = req.params;
 
-// Helper function to calculate momentum score
-const calculateMomentumScore = (views, activePromotions) => {
-  const baseScore = Math.min(views / 10, 50); // Max 50 from views
-  const promoBonus = activePromotions * 10; // 10 points per active promotion
-  return Math.min(baseScore + promoBonus, 100);
+    const promotion = await Promotion.findOne({
+      where: { id: promotionId, businessId: req.business.id },
+    });
+
+    if (!promotion) {
+      return res.status(404).json({ message: "Promotion not found" });
+    }
+
+    if (promotion.status === "pending") {
+      return res.status(400).json({
+        message:
+          "Promotion is not approved yet. Please wait for admin approval or 24 hours.",
+      });
+    }
+
+    // Deactivate any other active promotions
+    await Promotion.update(
+      { status: "inactive" },
+      { where: { businessId: req.business.id, status: "active" } }
+    );
+
+    // Activate this promotion
+    promotion.status = "active";
+    await promotion.save();
+
+    res.json({
+      message: "Promotion activated successfully",
+      promotion,
+    });
+  } catch (error) {
+    console.error("Error activating promotion:", error);
+    res.status(500).json({ message: error.message });
+  }
 };
 
-// Helper function to get momentum level
-const getMomentumLevel = (score) => {
-  if (score >= 70) return "High";
-  if (score >= 40) return "Medium";
-  return "Low";
+// ======================
+// BUSINESS: Deactivate Promotion
+// ======================
+const deactivatePromotion = async (req, res) => {
+  try {
+    const { promotionId } = req.params;
+
+    // Find promotion for this business
+    const promotion = await Promotion.findOne({
+      where: { id: promotionId, businessId: req.business.id },
+    });
+
+    if (!promotion) {
+      return res.status(404).json({ message: "Promotion not found" });
+    }
+    if (promotion.status === "pending") {
+      return res.status(400).json({
+        message: "Pending promotion cannot be deactivated. Approve it first.",
+      });
+    }
+
+    if (promotion.status === "expired") {
+      return res.status(400).json({
+        message: "Expired promotion cannot be deactivated.",
+      });
+    }
+
+    // Deactivate promotion
+    promotion.status = "inactive";
+    await promotion.save();
+
+    res.json({
+      message: "Promotion successfully deactivated",
+      promotion: {
+        id: promotion.id,
+        businessId: promotion.businessId,
+        status: promotion.status,
+        runDate: promotion.runDate,
+        stopDate: promotion.stopDate,
+        approvedAt: promotion.approvedAt,
+        createdAt: promotion.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("Error deactivating promotion:", error);
+    res.status(500).json({ message: "Server error: " + error.message });
+  }
 };
 
 module.exports = {
   createPromotion,
+  activatePromotion,
+  deactivatePromotion,
   getBusinessPromotions,
   updatePromotion,
   deletePromotion,
+  getPromotionById,
   getDashboard,
 };

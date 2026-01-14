@@ -97,7 +97,7 @@ const handleWebhook = async (req, res) => {
 
         if (business && business.autoApprovePromotions) {
           // Auto-approve: set to active immediately
-          promotion.status = "active";
+          promotion.status = "inactive";
           promotion.approvedAt = new Date();
           console.log(
             `✅ [PAYMENT] Promotion ${promotion.id} auto-activated (business has auto-approve enabled)`
