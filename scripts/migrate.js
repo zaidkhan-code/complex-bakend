@@ -31,7 +31,7 @@ const initMigrationsTable = async () => {
           defaultValue: sequelize.Sequelize.fn("NOW"),
         },
       },
-      { timestamps: false }
+      { timestamps: false },
     );
     console.log("✅ Migration tracking table created");
   } catch (error) {
@@ -54,7 +54,7 @@ const getExecutedMigrations = async () => {
   try {
     const result = await sequelize.query(
       'SELECT name FROM "SequelizeMeta" ORDER BY "executedAt" ASC',
-      { raw: true }
+      { raw: true },
     );
     return result[0].map((r) => r.name);
   } catch (error) {
@@ -71,7 +71,7 @@ const recordMigration = async (migrationName) => {
     {
       replacements: { name: migrationName },
       type: sequelize.Sequelize.QueryTypes.INSERT,
-    }
+    },
   );
 };
 
@@ -112,7 +112,7 @@ const runMigrations = async () => {
     const executedMigrations = await getExecutedMigrations();
     const allMigrations = getMigrationFiles();
     const pendingMigrations = allMigrations.filter(
-      (m) => !executedMigrations.includes(m)
+      (m) => !executedMigrations.includes(m),
     );
 
     if (pendingMigrations.length === 0) {
@@ -121,7 +121,7 @@ const runMigrations = async () => {
     }
 
     console.log(
-      `\n📋 Found ${pendingMigrations.length} pending migration(s):\n`
+      `\n📋 Found ${pendingMigrations.length} pending migration(s):\n`,
     );
 
     for (const migration of pendingMigrations) {
@@ -130,7 +130,8 @@ const runMigrations = async () => {
         const migrationModule = require(path.join(migrationsFolder, migration));
 
         if (typeof migrationModule.up === "function") {
-          await migrationModule.up(sequelize);
+          const queryInterface = sequelize.getQueryInterface();
+          await migrationModule.up(queryInterface, sequelize.Sequelize);
           await recordMigration(migration);
           console.log(`✅ Migration complete: ${migration}\n`);
         } else {
@@ -172,10 +173,9 @@ const rollbackMigration = async () => {
 
     try {
       console.log(`▶️  Rolling back migration: ${lastMigration}`);
-      const migrationModule = require(path.join(
-        migrationsFolder,
-        lastMigration
-      ));
+      const migrationModule = require(
+        path.join(migrationsFolder, lastMigration),
+      );
 
       if (typeof migrationModule.down === "function") {
         await migrationModule.down(sequelize);
@@ -221,7 +221,7 @@ const showStatus = async () => {
 
     console.log("\nPending Migrations:");
     const pendingMigrations = allMigrations.filter(
-      (m) => !executedMigrations.includes(m)
+      (m) => !executedMigrations.includes(m),
     );
     if (pendingMigrations.length === 0) {
       console.log("  (none)");

@@ -12,9 +12,11 @@
     "vercel-build": "npm install",
     "admin:create": "node scripts/createAdmin.js",
     "admin:seed": "node scripts/seedAdminUser.js",
+    "superadmin:create": "node scripts/createSuperAdmin.js",
     "migrate": "node scripts/migrate.js up",
     "migrate:down": "node scripts/migrate.js down",
     "migrate:status": "node scripts/migrate.js status",
+    "migrate:complete": "node scripts/runMigrations.js",
     "migrate:prod": "NODE_ENV=production node scripts/migrate.js up"
   },
   "dependencies": {

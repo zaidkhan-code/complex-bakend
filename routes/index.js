@@ -8,12 +8,14 @@ const businessRoutes = require("./businessRoutes");
 const adminRoutes = require("./adminRoutes");
 const promotionRoutes = require("./promotionRoutes");
 const paymentRoutes = require("./paymentRoutes");
+const roleRoutes = require("./roleRoutes");
 
 // Import models
 const Business = require("../models/Business");
 const Promotion = require("../models/Promotion");
 const Template = require("../models/Template");
-
+const User = require("../models/User");
+const Role = require("../models/Role");
 /**
  * Setup all model relationships
  */
@@ -31,6 +33,16 @@ const setupModelRelationships = () => {
   });
   Template.hasMany(Promotion, { foreignKey: "templateId", as: "promotions" });
   Promotion.belongsTo(Template, { foreignKey: "templateId", as: "template" });
+
+  Role.hasMany(User, {
+    foreignKey: "roleId",
+    as: "users",
+  });
+
+  User.belongsTo(Role, {
+    foreignKey: "roleId",
+    as: "role",
+  });
 };
 
 /**
@@ -49,6 +61,7 @@ const setupRoutes = (app) => {
   app.use("/api/users", userRoutes);
   app.use("/api/business", businessRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/roles", roleRoutes);
   app.use("/api/promotions", promotionRoutes);
   app.use("/api/payment", paymentRoutes);
 };
@@ -63,4 +76,5 @@ module.exports = {
   adminRoutes,
   promotionRoutes,
   paymentRoutes,
+  roleRoutes,
 };

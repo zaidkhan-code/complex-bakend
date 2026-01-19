@@ -30,9 +30,25 @@ const User = sequelize.define(
       type: DataTypes.ARRAY(DataTypes.UUID),
       defaultValue: [],
     },
-    role: {
+    roleId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Roles",
+        key: "id",
+      },
+    },
+
+    accountType: {
       type: DataTypes.ENUM("user", "business", "admin"),
       defaultValue: "user",
+      comment:
+        "Distinguishes between regular user, business, and admin account types",
+    },
+    isSuperAdmin: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: "SuperAdmin has all permissions",
     },
     status: {
       type: DataTypes.ENUM("active", "inactive", "blocked", "suspended"),
@@ -55,7 +71,7 @@ const User = sequelize.define(
         }
       },
     },
-  }
+  },
 );
 
 User.prototype.matchPassword = async function (enteredPassword) {

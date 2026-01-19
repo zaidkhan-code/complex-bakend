@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Business = require("../models/Business");
+const Role = require("../models/Role");
 const Promotion = require("../models/Promotion");
 const Template = require("../models/Template");
 const { Op } = require("sequelize");
@@ -24,7 +25,7 @@ const getAllUsers = async (req, res) => {
 
     // Filter by role (user, business, admin)
     if (role) {
-      where.role = role;
+      where.accountType = role;
     }
 
     // Filter by status (active, inactive, blocked, suspended)
@@ -397,7 +398,7 @@ const uploadTemplateImage = async (req, res) => {
     for (const file of req.files) {
       const cloudinaryResult = await uploadImageToCloudinary(
         file.buffer,
-        "templates"
+        "templates",
       );
 
       if (!cloudinaryResult.success) continue;
@@ -500,7 +501,7 @@ const changePromotionStatus = async (req, res) => {
     await promotion.save();
 
     console.log(
-      `🔄 [ADMIN] Promotion ${promotionId} status changed from ${oldStatus} to ${status}`
+      `🔄 [ADMIN] Promotion ${promotionId} status changed from ${oldStatus} to ${status}`,
     );
 
     res.json({
@@ -533,7 +534,7 @@ const toggleBusinessAutoApprove = async (req, res) => {
     await business.save();
 
     console.log(
-      `🔄 [ADMIN] Business ${businessId} auto-approve set to ${autoApprovePromotions}`
+      `🔄 [ADMIN] Business ${businessId} auto-approve set to ${autoApprovePromotions}`,
     );
 
     res.json({
@@ -576,19 +577,173 @@ const approvePromotion = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+/* ---------- MAKE USER ADMIN ---------- */
+const makeAdmin = async (req, res) => {
+  const { userId, roleId } = req.body;
+
+  const user = await User.findByPk(userId);
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  const role = await Role.findByPk(roleId);
+  if (!role) return res.status(404).json({ message: "Role not found" });
+
+  user.role = "admin";
+  user.accountType = "admin";
+  user.roleId = role.id;
+
+  await user.save();
+
+  res.json({ message: "User promoted to admin" });
+};
+
+/* ---------- UPDATE ADMIN ROLE ---------- */
+const updateAdminRole = async (req, res) => {
+  try {
+    const { roleId, isSuperAdmin } = req.body;
+    const { id } = req.params;
+
+    const user = await User.findByPk(id);
+    if (!user || user.role !== "admin") {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    if (isSuperAdmin) {
+      user.isSuperAdmin = true;
+      user.roleId = null;
+    } else {
+      user.isSuperAdmin = false;
+      user.roleId = roleId;
+    }
+
+    await user.save();
+
+    // Fetch role to include permissions in response
+    let permissions = {};
+    if (user.roleId) {
+      const role = await Role.findByPk(user.roleId);
+      if (role) {
+        permissions = role.permissions || {};
+      }
+    }
+
+    res.json({
+      message: "Admin role updated",
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        isSuperAdmin: user.isSuperAdmin,
+        roleId: user.roleId,
+        permissions,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ---------- CREATE ADMIN USER ---------- */
+const createAdminUser = async (req, res) => {
+  try {
+    const { fullName, email, password, roleId, isSuperAdmin } = req.body;
+
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ message: "Required fields missing" });
+    }
+
+    // Check if user exists
+    const existing = await User.findOne({ where: { email } });
+    if (existing) {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    // Create admin user
+    const user = await User.create({
+      fullName,
+      email,
+      password,
+      role: "admin",
+      accountType: "admin",
+      isSuperAdmin: isSuperAdmin || false,
+      roleId: isSuperAdmin ? null : roleId,
+      status: "active",
+    });
+
+    // Fetch role permissions if not super admin
+    let permissions = {};
+    if (!isSuperAdmin && roleId) {
+      const role = await Role.findByPk(roleId);
+      if (role) {
+        permissions = role.permissions || {};
+      }
+    }
+
+    res.status(201).json({
+      message: "Admin user created successfully",
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        isSuperAdmin: user.isSuperAdmin,
+        roleId: user.roleId,
+        permissions: user?.roleId,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ---------- GET USER PERMISSIONS ---------- */
+const getUserPermissions = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findByPk(userId, {
+      include: { model: Role, attributes: ["id", "name", "permissions"] },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let permissions = {};
+    if (user.isSuperAdmin) {
+      // Super admin has all permissions
+      permissions = {};
+    } else if (user.roleId && user.Role) {
+      permissions = user.Role.permissions || {};
+    }
+
+    res.json({
+      isSuperAdmin: user.isSuperAdmin,
+      roleId: user.roleId,
+      permissions,
+      role: user.role,
+      email: user.email,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getAllUsers,
   updateUserStatus,
   changePromotionStatus,
+  updateAdminRole,
+  makeAdmin,
   toggleBusinessAutoApprove,
   getAllBusinesses,
   approvePromotion,
   updateBusinessStatus,
-
   getAllPromotions,
   deletePromotion,
   getAdminDashboard,
   uploadTemplateImage,
   getAllTemplates,
   deleteTemplate,
+  createAdminUser,
+  getUserPermissions,
 };

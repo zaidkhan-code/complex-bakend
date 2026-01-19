@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const Business = require("../models/Business");
 const { generateToken } = require("../middleware/authMiddleware");
+const Role = require("../models/Role");
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -54,8 +55,8 @@ const registerBusiness = async (req, res) => {
     } = req.body;
     console.log(
       `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}, Categories: ${JSON.stringify(
-        categories
-      )}`
+        categories,
+      )}`,
     );
 
     // Check if business exists
@@ -85,7 +86,7 @@ const registerBusiness = async (req, res) => {
     });
 
     console.log(
-      `✅ [REGISTER BUSINESS] Business created - ID: ${business.id}, BusinessType: ${business.businessType}`
+      `✅ [REGISTER BUSINESS] Business created - ID: ${business.id}, BusinessType: ${business.businessType}`,
     );
 
     if (business) {
@@ -101,7 +102,7 @@ const registerBusiness = async (req, res) => {
         token: generateToken(business.id, "business"),
       };
       console.log(
-        `✅ [REGISTER BUSINESS] Response - BusinessType: ${responseData.businessType}`
+        `✅ [REGISTER BUSINESS] Response - BusinessType: ${responseData.businessType}`,
       );
       res.status(201).json(responseData);
     }
@@ -111,61 +112,110 @@ const registerBusiness = async (req, res) => {
   }
 };
 
-// @desc    Login user/business/admin
-// @route   POST /api/auth/login
-// @access  Public
 const login = async (req, res) => {
   try {
     const { email, password, type = "user" } = req.body;
-    console.log(`📝 [LOGIN] Attempt - Email: ${email}, Type: ${type}`);
 
     let account;
+
+    // =========================
+    // BUSINESS LOGIN
+    // =========================
     if (type === "business") {
       account = await Business.findOne({ where: { email } });
-    } else {
-      account = await User.findOne({ where: { email } });
+
+      if (!account)
+        return res.status(401).json({ message: "Invalid credentials" });
+
+      const isMatch = await account.matchPassword(password);
+      if (!isMatch)
+        return res.status(401).json({ message: "Invalid credentials" });
+
+      const token = generateToken(account.id, "business");
+
+      return res.json({
+        id: account.id,
+        email: account.email,
+        token,
+        name: account.name,
+        phone: account.phone,
+        category: account.category,
+        businessType: account.businessType || "small",
+      });
     }
 
-    if (!account) {
-      console.log(`❌ [LOGIN] Account not found - Email: ${email}`);
+    // =========================
+    // USER / ADMIN LOGIN
+    // =========================
+    account = await User.findOne({
+      where: { email },
+      include:
+        type === "admin"
+          ? [
+              {
+                model: Role,
+                as: "role",
+                attributes: ["id", "name", "permissions"],
+              },
+            ]
+          : [],
+    });
+
+    if (!account)
       return res.status(401).json({ message: "Invalid credentials" });
-    }
-    if (account.isBlocked) {
-      console.log(`❌ [LOGIN] Account is blocked - Email: ${email}`);
+
+    if (account.status === "blocked")
       return res.status(403).json({ message: "Account is blocked" });
-    }
 
     const isMatch = await account.matchPassword(password);
-
-    if (!isMatch) {
-      console.log(`❌ [LOGIN] Password mismatch - Email: ${email}`);
+    if (!isMatch)
       return res.status(401).json({ message: "Invalid credentials" });
-    }
 
+    const token = generateToken(account.id, type);
+
+    // =========================
+    // BASE RESPONSE
+    // =========================
     const response = {
       id: account.id,
       email: account.email,
-      token: generateToken(account.id, type),
+      token,
+      fullName: account.fullName,
     };
 
-    if (type === "business") {
-      response.name = account.name;
-      response.phone = account.phone;
-      response.category = account.category;
-      response.businessType = account.businessType || "small"; // Default to "small" if not set
-    } else if (type === "admin") {
-      response.fullName = account.fullName;
-      response.role = account.role;
-    } else {
-      response.fullName = account.fullName;
-      response.role = account.role;
+    // =========================
+    // ADMIN RESPONSE (IMPORTANT)
+    // =========================
+    if (type === "admin") {
+      response.isSuperAdmin = account.isSuperAdmin;
+
+      if (account.isSuperAdmin) {
+        response.role = {
+          name: "SuperAdmin",
+          permissions: "ALL",
+        };
+      } else {
+        response.role = account.role
+          ? {
+              id: account.role.id,
+              name: account.role.name,
+              permissions: account.role.permissions,
+            }
+          : null;
+      }
     }
 
-    console.log(`✅ [LOGIN] Success - Email: ${email}, Type: ${type}`);
-    res.json(response);
+    // =========================
+    // NORMAL USER RESPONSE
+    // =========================
+    if (type === "user") {
+      response.role = "user";
+    }
+
+    return res.json(response);
   } catch (error) {
-    console.error(`❌ [LOGIN] Error:`, error.message);
-    res.status(500).json({ message: error.message });
+    console.error("Login error:", error);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
