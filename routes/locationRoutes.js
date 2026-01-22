@@ -3,57 +3,40 @@ const router = express.Router();
 
 router.get("/", async (req, res) => {
   try {
-    let { city, state, lat, lon } = req.query;
-
-    lat = lat ? Number(lat) : null;
-    lon = lon ? Number(lon) : null;
-
     // Get client IP (proxy safe)
     const ip =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.socket.remoteAddress;
 
-    let geo = null;
+    // If localhost or private IP, third-party APIs may fail
+    // You can still send response
+    const ipwhoPromise = fetch(`https://ipwho.is/${ip}`)
+      .then((r) => r.json())
+      .catch(() => ({ error: "ipwho.is failed" }));
 
-    // If frontend didn't send location → use IP lookup
-    if (!city && !state && (lat === null || lon === null)) {
-      const response = await fetch(`https://ipwho.is/${ip}`);
-      const response1 = await fetch(
-        `https://iplocalize.com/api/v1/lookup/${ip}`,
-      );
-      const data = await response.json();
-      const data1 = await response1.json();
-      geo = {
-        data: data,
-        data1: data1,
-      };
+    const iplocalizePromise = fetch(
+      `https://iplocalize.com/api/v1/lookup/${ip}`,
+    )
+      .then((r) => r.json())
+      .catch(() => ({ error: "iplocalize failed" }));
 
-      if (geo.success) {
-        city = geo.city || null;
-        state = geo.region || null;
-        lat = geo.latitude || null;
-        lon = geo.longitude || null;
-      }
-    } else {
-      // Still fetch geo for reference
-      const response = await fetch(`https://ipwho.is/${ip}`);
-      geo = await response.json();
-    }
+    // Run both requests in parallel
+    const [ipwho, iplocalize] = await Promise.all([
+      ipwhoPromise,
+      iplocalizePromise,
+    ]);
 
-    res.json({
+    // ✅ SEND DIRECT RAW RESPONSE TO FRONTEND
+    return res.json({
       ip,
-      city: city ?? "Unknown",
-      state: state ?? "Unknown",
-      lat,
-      lon,
-      geo, // full ipwho.is response
+      ipwho, // FULL ipwho.is response
+      iplocalize, // FULL iplocalize.com response
     });
   } catch (error) {
-    res.status(500).json({
-      error: "Failed to detect location",
+    return res.status(500).json({
+      error: "Location detection failed",
       message: error.message,
     });
   }
 });
-
 module.exports = router;
