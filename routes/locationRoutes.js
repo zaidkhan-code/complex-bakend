@@ -18,7 +18,15 @@ router.get("/", async (req, res) => {
     // If frontend didn't send location → use IP lookup
     if (!city && !state && (lat === null || lon === null)) {
       const response = await fetch(`https://ipwho.is/${ip}`);
-      geo = await response.json();
+      const response1 = await fetch(
+        `https://iplocalize.com/api/v1/lookup/${ip}`,
+      );
+      const data = await response.json();
+      const data1 = await response1.json();
+      geo = {
+        data: data,
+        data1: data1,
+      };
 
       if (geo.success) {
         city = geo.city || null;
