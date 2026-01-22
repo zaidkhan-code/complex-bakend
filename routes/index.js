@@ -16,6 +16,7 @@ const Promotion = require("../models/Promotion");
 const Template = require("../models/Template");
 const User = require("../models/User");
 const Role = require("../models/Role");
+const { default: axios } = require("axios");
 /**
  * Setup all model relationships
  */
@@ -64,6 +65,30 @@ const setupRoutes = (app) => {
   app.use("/api/roles", roleRoutes);
   app.use("/api/promotions", promotionRoutes);
   app.use("/api/payment", paymentRoutes);
+  app.get("/api/locationtest", async (req, res) => {
+    try {
+      const ip =
+        req.headers["x-forwarded-for"]?.split(",")[0] ||
+        req.socket.remoteAddress;
+
+      const response = await axios.get(
+        `https://ipinfo.io/${ip}?token=YOUR_TOKEN`,
+      );
+
+      const data = response.data;
+
+      res.json({
+        ip: data.ip,
+        city: data.city,
+        state: data.region,
+        country: data.country,
+        timezone: data.timezone,
+        loc: data.loc, // "lat,long"
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Location fetch failed" });
+    }
+  });
 };
 
 module.exports = {

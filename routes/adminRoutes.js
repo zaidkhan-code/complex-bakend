@@ -38,7 +38,7 @@ const upload = multer({
 
 // ---------------- MIDDLEWARE ----------------
 router.use(protect);
-router.use(adminOnly);
+// router.use(adminOnly);
 
 // ---------------- DASHBOARD ----------------
 router.get(
