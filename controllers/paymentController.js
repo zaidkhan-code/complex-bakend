@@ -24,28 +24,30 @@ const createCheckoutSession = async (req, res) => {
     }
 
     // Create Stripe checkout session
+    const productData = {
+      name: "Promotion Service",
+      description: `Promotion from ${promotion.runDate.toDateString()} to ${promotion.stopDate.toDateString()}`,
+    };
+
+    // Convert promotion price to cents for Stripe
+    const unitAmount = Math.round(promotion.price * 100);
+
+    // Build Stripe session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
         {
           price_data: {
             currency: "usd",
-            product_data: {
-              name: "Promotion Service",
-              description: `Promotion from ${promotion.runDate} to ${promotion.stopDate}`,
-            },
-            unit_amount: Math.round(promotion.price * 100), // Convert to cents
+            product_data: productData,
+            unit_amount: unitAmount,
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/promotions/${promotionId}`,
+      success_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/business/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/business/promotions/${promotionId}`,
       metadata: {
         promotionId: promotion.id,
         businessId: req.business.id,
@@ -70,7 +72,7 @@ const handleWebhook = async (req, res) => {
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET
+      process.env.STRIPE_WEBHOOK_SECRET,
     );
   } catch (err) {
     console.error("Webhook signature verification failed:", err.message);
@@ -100,13 +102,13 @@ const handleWebhook = async (req, res) => {
           promotion.status = "inactive";
           promotion.approvedAt = new Date();
           console.log(
-            `✅ [PAYMENT] Promotion ${promotion.id} auto-activated (business has auto-approve enabled)`
+            `✅ [PAYMENT] Promotion ${promotion.id} auto-activated (business has auto-approve enabled)`,
           );
         } else {
           // Default: set to pending, will be activated after 24 hours or by admin
           promotion.status = "pending";
           console.log(
-            `⏳ [PAYMENT] Promotion ${promotion.id} set to pending (admin approval required or 24-hour auto-activation)`
+            `⏳ [PAYMENT] Promotion ${promotion.id} set to pending (admin approval required or 24-hour auto-activation)`,
           );
         }
 
@@ -127,7 +129,7 @@ const handleWebhook = async (req, res) => {
 const verifyPayment = async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(
-      req.params.sessionId
+      req.params.sessionId,
     );
 
     if (session.payment_status === "paid") {

@@ -48,34 +48,47 @@ const createPromotion = async (req, res) => {
     });
 
     console.log(
-      `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`
+      `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`,
     );
 
+    console.log(
+      `   Preparing Stripe checkout session...`,
+      cities,
+      states,
+      timezones,
+    );
+    const formatList = (items, formatter, emptyLabel) => {
+      if (!items || items.length === 0) return emptyLabel;
+      return items.map(formatter).join(", ");
+    };
+
+    const formatDate = (date) => new Date(date).toLocaleDateString("en-US");
+
+    const formatTime = (time) => time || "N/A";
     // Format promotion details for Stripe description
-    const statesList =
-      states && states.length > 0
-        ? states.map((s) => `${s.name || s.code} (${s.code})`).join(", ")
-        : "No states selected";
+    const statesList = formatList(
+      states,
+      (s) => `${s.name || s.code} (${s.state_code})`,
+      "No states selected",
+    );
 
-    const citiesList =
-      cities && cities.length > 0
-        ? cities.map((c) => c.name).join(", ")
-        : "No cities selected";
+    const citiesList = formatList(cities, (c) => c.name, "No cities selected");
 
-    const timezonesList =
-      timezones && timezones.length > 0
-        ? timezones.join(", ")
-        : "No timezones selected";
+    const timezonesList = formatList(
+      timezones,
+      (tz) => tz,
+      "No timezones selected",
+    );
 
     const promotionDescription = `
-Promotion Details:
+Promotion Details
 States: ${statesList}
- Cities: ${citiesList}
- Timezones: ${timezonesList}
- Date: ${promotion.runDate} to ${promotion.stopDate}
- Time: ${promotion.runTime} to ${promotion.stopTime}
+Cities: ${citiesList}
+Timezones: ${timezonesList}
+Date: ${formatDate(promotion.runDate)} → ${formatDate(promotion.stopDate)}
+Time: ${formatTime(promotion.runTime)} → ${formatTime(promotion.stopTime)}
 Price: $${promotion.price}
-    `.trim();
+`.trim();
 
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
@@ -104,9 +117,6 @@ Price: $${promotion.price}
         promotionId: promotion.id,
         businessId: req.business.id,
         category: promotion.category,
-        states: JSON.stringify(states),
-        cities: JSON.stringify(cities),
-        timezones: JSON.stringify(timezones),
         runDate: promotion.runDate,
         stopDate: promotion.stopDate,
         runTime: promotion.runTime,
@@ -115,7 +125,7 @@ Price: $${promotion.price}
     });
 
     console.log(
-      `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`
+      `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`,
     );
 
     // Return promotion data with Stripe session info
@@ -320,8 +330,8 @@ const getDashboard = async (req, res) => {
               momentumLevel === "High"
                 ? "Excellent promotion consistency 🚀"
                 : momentumLevel === "Medium"
-                ? "Keep up the momentum!"
-                : "Run promotions more frequently to improve momentum",
+                  ? "Keep up the momentum!"
+                  : "Run promotions more frequently to improve momentum",
           },
         },
       },
@@ -352,7 +362,7 @@ const activatePromotion = async (req, res) => {
     // Deactivate any other active promotions
     await Promotion.update(
       { status: "inactive" },
-      { where: { businessId: req.business.id, status: "active" } }
+      { where: { businessId: req.business.id, status: "active" } },
     );
 
     // Activate this promotion

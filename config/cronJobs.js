@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const { Op } = require("sequelize");
 const Promotion = require("../models/Promotion");
+const Business = require("../models/Business");
 
 const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
   try {

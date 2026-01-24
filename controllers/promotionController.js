@@ -1,7 +1,7 @@
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
 const Template = require("../models/Template");
-const { Op } = require("sequelize");
+const { Op, literal } = require("sequelize");
 const { calculatePrice } = require("../utils/calculatePrice");
 const {
   isValidDateRange,
@@ -11,9 +11,10 @@ const {
 // @desc    Get all promotions with filters
 // @route   GET /api/promotions
 // @access  Public
+
 const getPromotions = async (req, res) => {
   try {
-    const { location, category, state, city, timezone } = req.query;
+    const { city, state, timezone, category } = req.query;
 
     const where = {
       status: "active",
@@ -23,29 +24,36 @@ const getPromotions = async (req, res) => {
       where.category = category;
     }
 
-    // For JSONB arrays, use contains operator to find promotions that target the provided values
-    if (state) {
-      where.states = { [Op.contains]: [state] };
-    }
+    // Build priority scoring
+    // City exact match gets highest score → 3
+    // State code exact match → 2
+    // Timezone match → 1
+    const orderPriority = literal(`
+      (CASE
+        WHEN cities @> '[{"state_code":"${state}"}]' THEN 2
+        WHEN timezones @> '["${timezone}"]' THEN 1
+        ELSE 0
+      END) DESC
+    `);
 
-    if (city) {
-      where.cities = { [Op.contains]: [city] };
-    }
-
-    if (timezone) {
-      where.timezones = { [Op.contains]: [timezone] };
-    }
-
+    // Combined where with fallback: city OR state OR timezone
     const promotions = await Promotion.findAll({
-      where,
+      where: {
+        ...where,
+        [Op.or]: [
+          city && { cities: { [Op.contains]: [{ name: city }] } },
+          state && { states: { [Op.contains]: [{ state_code: state }] } },
+          timezone && { timezones: { [Op.contains]: [timezone] } },
+        ].filter(Boolean),
+      },
       include: [
         {
           model: Business,
           as: "business",
-          attributes: ["name", "category"],
+          attributes: ["name", "categories", "businessAddress"],
         },
       ],
-      order: [["createdAt", "DESC"]],
+      order: [orderPriority, ["createdAt", "DESC"]],
     });
 
     res.json(promotions);
