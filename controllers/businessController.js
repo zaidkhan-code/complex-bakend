@@ -175,11 +175,12 @@ const createPromotion = async (req, res) => {
         message: "You need an active subscription to create promotions.",
       });
     }
+    console.log(business, "BUSINESS SUBSCRIPTION INFO");
     const subStart = new Date(business.subscriptionStart);
     const subEnd = new Date(business.subscriptionEnd);
     const run = new Date(runDate);
     const stop = new Date(stopDate);
-    if (run < subStart || stop > subEnd) {
+    if (stop > subEnd) {
       return res.status(400).json({
         message: `Promotion dates must be within your subscription period (${subStart.toISOString().split("T")[0]} → ${subEnd.toISOString().split("T")[0]})`,
       });
@@ -254,7 +255,12 @@ const createPromotion = async (req, res) => {
       stopTime,
       calculatedMonths: 1, // keep but not heavily used here
       price: totalPrice,
-      status: totalPrice > 0 ? "pending" : "inactive",
+      status:
+        totalPrice > 0
+          ? "pending"
+          : business.autoApprovePromotions
+            ? "inactive"
+            : "pending",
       autoApprove: business.autoApprovePromotions || false,
       paymentStatus: totalPrice > 0 ? "pending" : "completed",
     });
@@ -293,7 +299,9 @@ const createPromotion = async (req, res) => {
       // Pay invoice (this charges the customer's default payment method)
       const paidInvoice = await stripe.invoices.pay(invoice.id);
       if (paidInvoice.status === "paid") {
-        promotion.status = "active";
+        promotion.status = business.autoApprovePromotions
+          ? "pending"
+          : "inactive";
         promotion.paymentStatus = "completed";
         await promotion.save();
       } else {
@@ -310,8 +318,6 @@ const createPromotion = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-module.exports = { createPromotion };
 
 // @desc    Get all business promotions
 // @route   GET /api/business/promotions

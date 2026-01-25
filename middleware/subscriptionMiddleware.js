@@ -1,4 +1,4 @@
-const { Business } = require("../models/Business");
+const Business  = require("../models/Business");
 
 const requireActiveSubscription = async (req, res, next) => {
   try {
