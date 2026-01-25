@@ -12,12 +12,20 @@ const {
 } = require("../controllers/businessController");
 const { protect, businessOnly } = require("../middleware/authMiddleware");
 const { validatePromotion } = require("../middleware/validationMiddleware");
+const {
+  requireActiveSubscription,
+} = require("../middleware/subscriptionMiddleware");
 
 router.use(protect);
 router.use(businessOnly);
 
 router.get("/dashboard", getDashboard);
-router.post("/promotions", validatePromotion, createPromotion);
+router.post(
+  "/promotions",
+  requireActiveSubscription,
+  validatePromotion,
+  createPromotion,
+);
 router.get("/promotions", getBusinessPromotions);
 router.get("/promotions/:promotionId", getPromotionById);
 router.put("/promotions/:id", updatePromotion);

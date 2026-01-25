@@ -62,6 +62,14 @@ const Business = sequelize.define(
       type: DataTypes.ENUM("active", "inactive", "blocked", "suspended"),
       defaultValue: "active",
     },
+    subscriptionStatus: {
+      type: DataTypes.ENUM("active", "expired", "canceled", "none"),
+      defaultValue: "none",
+    },
+    subscriptionStart: DataTypes.DATE,
+    subscriptionEnd: DataTypes.DATE,
+    stripeSubscriptionId: DataTypes.STRING,
+    stripeCustomerId: DataTypes.STRING,
   },
   {
     timestamps: true,
@@ -79,7 +87,7 @@ const Business = sequelize.define(
         }
       },
     },
-  }
+  },
 );
 
 Business.prototype.matchPassword = async function (enteredPassword) {

@@ -11,8 +11,144 @@ const {
 // @desc    Create new promotion
 // @route   POST /api/business/promotions
 // @access  Private (Business)
+// const createPromotion = async (req, res) => {
+//   try {
+//     const {
+//       templateId,
+//       imageUrl,
+//       text,
+//       backgroundColor,
+//       category,
+//       cities = [],
+//       states = [],
+//       timezones = [],
+//       runDate,
+//       stopDate,
+//       runTime,
+//       stopTime,
+//       price, // Price calculated on frontend
+//     } = req.body;
+
+//     const promotion = await Promotion.create({
+//       businessId: req.business.id,
+//       templateId,
+//       imageUrl,
+//       text: text ? (Array.isArray(text) ? text : [text]) : [],
+//       backgroundColor: backgroundColor || "",
+//       category: category || req.business.category,
+//       cities,
+//       states,
+//       timezones,
+//       runDate,
+//       stopDate,
+//       runTime,
+//       stopTime,
+//       price,
+//       status: "pending", // Will be activated after payment
+//     });
+
+//     console.log(
+//       `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`,
+//     );
+
+//     console.log(
+//       `   Preparing Stripe checkout session...`,
+//       cities,
+//       states,
+//       timezones,
+//     );
+//     const formatList = (items, formatter, emptyLabel) => {
+//       if (!items || items.length === 0) return emptyLabel;
+//       return items.map(formatter).join(", ");
+//     };
+
+//     const formatDate = (date) => new Date(date).toLocaleDateString("en-US");
+
+//     const formatTime = (time) => time || "N/A";
+//     // Format promotion details for Stripe description
+//     const statesList = formatList(
+//       states,
+//       (s) => `${s.name || s.code} (${s.state_code})`,
+//       "No states selected",
+//     );
+
+//     const citiesList = formatList(cities, (c) => c.name, "No cities selected");
+
+//     const timezonesList = formatList(
+//       timezones,
+//       (tz) => tz,
+//       "No timezones selected",
+//     );
+
+//     const promotionDescription = `
+// Promotion Details
+// States: ${statesList}
+// Cities: ${citiesList}
+// Timezones: ${timezonesList}
+// Date: ${formatDate(promotion.runDate)} → ${formatDate(promotion.stopDate)}
+// Time: ${formatTime(promotion.runTime)} → ${formatTime(promotion.stopTime)}
+// Price: $${promotion.price}
+// `.trim();
+
+//     // Create Stripe checkout session
+//     const session = await stripe.checkout.sessions.create({
+//       payment_method_types: ["card"],
+//       line_items: [
+//         {
+//           price_data: {
+//             currency: "usd",
+//             product_data: {
+//               name: "Promotion Service",
+//               description: promotionDescription,
+//             },
+//             unit_amount: Math.round(promotion.price * 100), // Convert to cents
+//           },
+//           quantity: 1,
+//         },
+//       ],
+//       mode: "payment",
+//       success_url: `${
+//         process.env.FRONTEND_URL || "http://localhost:3000"
+//       }/business/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+//       cancel_url: `${
+//         process.env.FRONTEND_URL || "http://localhost:3000"
+//       }/business/promotions?payment_canceled=true&promotion_id=${promotion.id}`,
+//       metadata: {
+//         promotionId: promotion.id,
+//         businessId: req.business.id,
+//         category: promotion.category,
+//         runDate: promotion.runDate,
+//         stopDate: promotion.stopDate,
+//         runTime: promotion.runTime,
+//         stopTime: promotion.stopTime,
+//       },
+//     });
+
+//     console.log(
+//       `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`,
+//     );
+
+//     // Return promotion data with Stripe session info
+//     res.status(201).json({
+//       promotion,
+//       stripeSession: {
+//         sessionId: session.id,
+//         url: session.url,
+//       },
+//     });
+//   } catch (error) {
+//     console.error(`❌ [CREATE PROMOTION] Error:`, error.message);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+// controllers/promotionController.js
+
 const createPromotion = async (req, res) => {
   try {
+    const business = await Business.findByPk(req.business.id);
+    if (!business)
+      return res.status(404).json({ message: "Business not found" });
+
     const {
       templateId,
       imageUrl,
@@ -26,16 +162,89 @@ const createPromotion = async (req, res) => {
       stopDate,
       runTime,
       stopTime,
-      price, // Price calculated on frontend
+      // price may be provided by frontend but we recalc
     } = req.body;
 
+    // Validate subscription
+    if (
+      !business.subscriptionStart ||
+      !business.subscriptionEnd ||
+      business.subscriptionStatus !== "active"
+    ) {
+      return res.status(403).json({
+        message: "You need an active subscription to create promotions.",
+      });
+    }
+    const subStart = new Date(business.subscriptionStart);
+    const subEnd = new Date(business.subscriptionEnd);
+    const run = new Date(runDate);
+    const stop = new Date(stopDate);
+    if (run < subStart || stop > subEnd) {
+      return res.status(400).json({
+        message: `Promotion dates must be within your subscription period (${subStart.toISOString().split("T")[0]} → ${subEnd.toISOString().split("T")[0]})`,
+      });
+    }
+
+    // Pricing logic (match front-end)
+    const isOnlineStore = business.businessType === "online-ecommerce";
+    const hasEasternTimezone = timezones.some((tz) =>
+      tz.toLowerCase().includes("eastern"),
+    );
+    let baseCost = 0;
+    let stateCost = 0;
+    let timezoneCost = 0;
+
+    if (isOnlineStore) {
+      baseCost = 0; // subscription replaces baseCost for online store
+      // states: first one included? In your front-end online used base 10 includes 1 state;
+      // for subscription we choose: states charge as before EXCEPT base replaced by subscription.
+      if (states.length > 1) {
+        stateCost = (states.length - 1) * 10;
+      }
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern"),
+          ).length;
+          timezoneCost = nonEasternCount * 30 + 50;
+        } else {
+          timezoneCost = timezones.length * 30;
+        }
+      }
+    } else {
+      // Physical location pricing: states charged as before
+      if (states.length > 0) {
+        stateCost = states.length * 20;
+        baseCost = 0; // subscription replaces per-promotion base cost
+      } else {
+        baseCost = 0; // subscription replaces starter charge
+      }
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern"),
+          ).length;
+          timezoneCost = nonEasternCount * 60 + 100;
+        } else {
+          timezoneCost = timezones.length * 60;
+        }
+      }
+    }
+
+    // IMPORTANT: Cities are free up to 2 per promotion (no cost)
+    // (no city cost is added)
+
+    const subtotal = baseCost + stateCost + timezoneCost;
+    const totalPrice = subtotal; // subscription months already paid separately
+
+    // Create Promotion record (status pending until invoice paid)
     const promotion = await Promotion.create({
-      businessId: req.business.id,
+      businessId: business.id,
       templateId,
       imageUrl,
-      text: text ? (Array.isArray(text) ? text : [text]) : [],
+      text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      category: category || req.business.category,
+      category: category || business.category,
       cities,
       states,
       timezones,
@@ -43,104 +252,66 @@ const createPromotion = async (req, res) => {
       stopDate,
       runTime,
       stopTime,
-      price,
-      status: "pending", // Will be activated after payment
+      calculatedMonths: 1, // keep but not heavily used here
+      price: totalPrice,
+      status: totalPrice > 0 ? "pending" : "inactive",
+      autoApprove: business.autoApprovePromotions || false,
+      paymentStatus: totalPrice > 0 ? "pending" : "completed",
     });
 
-    console.log(
-      `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`,
-    );
+    let invoice = null;
+    // If there is an add-on cost, create invoice items and finalize invoice to charge immediately
+    if (totalPrice > 0) {
+      if (!business.stripeCustomerId) {
+        // Create stripe customer if missing
+        const customer = await stripe.customers.create({
+          email: business.email,
+          name: business.name,
+          metadata: { businessId: business.id },
+        });
+        business.stripeCustomerId = customer.id;
+        await business.save();
+      }
 
-    console.log(
-      `   Preparing Stripe checkout session...`,
-      cities,
-      states,
-      timezones,
-    );
-    const formatList = (items, formatter, emptyLabel) => {
-      if (!items || items.length === 0) return emptyLabel;
-      return items.map(formatter).join(", ");
-    };
+      // Create invoice item for the add-on cost (in cents)
+      const description = `Promotion add-ons: states ${states.length}, timezones ${timezones.length} (Promotion ${promotion.id})`;
+      await stripe.invoiceItems.create({
+        customer: business.stripeCustomerId,
+        amount: Math.round(totalPrice * 100),
+        currency: "usd",
+        description,
+        metadata: { promotionId: promotion.id, businessId: business.id },
+      });
 
-    const formatDate = (date) => new Date(date).toLocaleDateString("en-US");
+      // Create and pay the invoice immediately
+      invoice = await stripe.invoices.create({
+        customer: business.stripeCustomerId,
+        auto_advance: true, // auto-finalize
+        metadata: { promotionId: promotion.id, businessId: business.id },
+      });
 
-    const formatTime = (time) => time || "N/A";
-    // Format promotion details for Stripe description
-    const statesList = formatList(
-      states,
-      (s) => `${s.name || s.code} (${s.state_code})`,
-      "No states selected",
-    );
+      // Pay invoice (this charges the customer's default payment method)
+      const paidInvoice = await stripe.invoices.pay(invoice.id);
+      if (paidInvoice.status === "paid") {
+        promotion.status = "active";
+        promotion.paymentStatus = "completed";
+        await promotion.save();
+      } else {
+        promotion.status = "pending";
+        promotion.paymentStatus = "pending";
+        await promotion.save();
+      }
+    }
 
-    const citiesList = formatList(cities, (c) => c.name, "No cities selected");
-
-    const timezonesList = formatList(
-      timezones,
-      (tz) => tz,
-      "No timezones selected",
-    );
-
-    const promotionDescription = `
-Promotion Details
-States: ${statesList}
-Cities: ${citiesList}
-Timezones: ${timezonesList}
-Date: ${formatDate(promotion.runDate)} → ${formatDate(promotion.stopDate)}
-Time: ${formatTime(promotion.runTime)} → ${formatTime(promotion.stopTime)}
-Price: $${promotion.price}
-`.trim();
-
-    // Create Stripe checkout session
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: "Promotion Service",
-              description: promotionDescription,
-            },
-            unit_amount: Math.round(promotion.price * 100), // Convert to cents
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/business/promotions?payment_canceled=true&promotion_id=${promotion.id}`,
-      metadata: {
-        promotionId: promotion.id,
-        businessId: req.business.id,
-        category: promotion.category,
-        runDate: promotion.runDate,
-        stopDate: promotion.stopDate,
-        runTime: promotion.runTime,
-        stopTime: promotion.stopTime,
-      },
-    });
-
-    console.log(
-      `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`,
-    );
-
-    // Return promotion data with Stripe session info
-    res.status(201).json({
-      promotion,
-      stripeSession: {
-        sessionId: session.id,
-        url: session.url,
-      },
-    });
+    // Return promotion + invoice info (if any)
+    res.status(201).json({ promotion, invoice });
   } catch (error) {
-    console.error(`❌ [CREATE PROMOTION] Error:`, error.message);
+    console.error("CREATE PROMOTION ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
+module.exports = { createPromotion };
 
 // @desc    Get all business promotions
 // @route   GET /api/business/promotions

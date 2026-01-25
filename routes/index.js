@@ -8,6 +8,7 @@ const businessRoutes = require("./businessRoutes");
 const adminRoutes = require("./adminRoutes");
 const promotionRoutes = require("./promotionRoutes");
 const paymentRoutes = require("./paymentRoutes");
+const subscriptionRoutes = require("./subscriptionRoutes");
 const roleRoutes = require("./roleRoutes");
 
 // Import models
@@ -17,6 +18,7 @@ const Template = require("../models/Template");
 const User = require("../models/User");
 const Role = require("../models/Role");
 const { default: axios } = require("axios");
+const SubscriptionHistory = require("../models/SubscriptionHistory");
 /**
  * Setup all model relationships
  */
@@ -44,6 +46,16 @@ const setupModelRelationships = () => {
     foreignKey: "roleId",
     as: "role",
   });
+  Business.hasMany(SubscriptionHistory, {
+    foreignKey: "businessId",
+    as: "subscriptions",
+    onDelete: "CASCADE",
+  });
+
+  SubscriptionHistory.belongsTo(Business, {
+    foreignKey: "businessId",
+    as: "business",
+  });
 };
 
 /**
@@ -65,6 +77,7 @@ const setupRoutes = (app) => {
   app.use("/api/roles", roleRoutes);
   app.use("/api/promotions", promotionRoutes);
   app.use("/api/payment", paymentRoutes);
+  app.use("/api/subscription", subscriptionRoutes);
   app.get("/api/locationtest", async (req, res) => {
     try {
       const ip =
