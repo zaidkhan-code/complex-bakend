@@ -32,7 +32,7 @@ const createSubscriptionCheckout = async (req, res) => {
 
     const price = await stripe.prices.create({
       product: product.id,
-      unit_amount: priceAmount,
+      unit_amount: priceAmount * months,
       currency,
       recurring: { interval: "month" },
     });

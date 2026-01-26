@@ -8,6 +8,172 @@ const {
   calculateMonthsFromDateRange,
 } = require("../utils/dateUtils");
 
+const createPromotion = async (req, res) => {
+  try {
+    const business = await Business.findByPk(req.business.id);
+    if (!business)
+      return res.status(404).json({ message: "Business not found" });
+
+    const {
+      templateId,
+      imageUrl,
+      text,
+      backgroundColor,
+      category,
+      cities = [],
+      states = [],
+      timezones = [],
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      // price may be provided by frontend but we recalc
+    } = req.body;
+
+    // Validate subscription
+    if (
+      !business.subscriptionStart ||
+      !business.subscriptionEnd ||
+      business.subscriptionStatus !== "active"
+    ) {
+      return res.status(403).json({
+        message: "You need an active subscription to create promotions.",
+      });
+    }
+    console.log(business, "BUSINESS SUBSCRIPTION INFO");
+    const subStart = new Date(business.subscriptionStart);
+    const subEnd = new Date(business.subscriptionEnd);
+    const run = new Date(runDate);
+    const stop = new Date(stopDate);
+    if (stop > subEnd) {
+      return res.status(400).json({
+        message: `Promotion dates must be within your subscription period (${subStart.toISOString().split("T")[0]} → ${subEnd.toISOString().split("T")[0]})`,
+      });
+    }
+
+    // Pricing logic (match front-end)
+    const isOnlineStore = business.businessType === "online-ecommerce";
+    const hasEasternTimezone = timezones.some((tz) =>
+      tz.toLowerCase().includes("eastern"),
+    );
+    let stateCost = 0;
+    let timezoneCost = 0;
+
+    if (isOnlineStore) {
+      if (states.length > 1) {
+        stateCost = (states.length - 1) * 10;
+      }
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern"),
+          ).length;
+          timezoneCost = nonEasternCount * 30 + 50;
+        } else {
+          timezoneCost = timezones.length * 30;
+        }
+      }
+    } else {
+      // Physical location pricing: states charged as before
+      if (states.length > 0) {
+        stateCost = states.length * 20;
+      } else {
+      }
+      if (timezones.length > 0) {
+        if (hasEasternTimezone) {
+          const nonEasternCount = timezones.filter(
+            (tz) => !tz.toLowerCase().includes("eastern"),
+          ).length;
+          timezoneCost = nonEasternCount * 60 + 100;
+        } else {
+          timezoneCost = timezones.length * 60;
+        }
+      }
+    }
+
+    // IMPORTANT: Cities are free up to 2 per promotion (no cost)
+    // (no city cost is added)
+
+    const subtotal = stateCost + timezoneCost;
+    const totalPrice = subtotal; // subscription months already paid separately
+
+    // Create Promotion record (status pending until invoice paid)
+    const promotion = await Promotion.create({
+      businessId: business.id,
+      templateId,
+      imageUrl,
+      text: Array.isArray(text) ? text : text ? [text] : [],
+      backgroundColor: backgroundColor || "",
+      category: category || business.category,
+      cities,
+      states,
+      timezones,
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      calculatedMonths: 1, // keep but not heavily used here
+      price: totalPrice,
+      status:
+        totalPrice > 0
+          ? "pending"
+          : business.autoApprovePromotions
+            ? "inactive"
+            : "pending",
+      autoApprove: business.autoApprovePromotions || false,
+      paymentStatus: totalPrice > 0 ? "pending" : "completed",
+    });
+
+    // If there is an add-on cost, create PaymentIntent for custom checkout UI
+    if (totalPrice > 0) {
+      if (!business.stripeCustomerId) {
+        // Create stripe customer if missing
+        const customer = await stripe.customers.create({
+          email: business.email,
+          name: business.name,
+          metadata: { businessId: business.id },
+        });
+        business.stripeCustomerId = customer.id;
+        await business.save();
+      }
+
+      // Create PaymentIntent (NOT Invoice) - customer will confirm via Payment Element
+      const description = `Promotion add-ons: ${states.length} states, ${timezones.length} timezones`;
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: Math.round(totalPrice * 100), // cents
+        currency: "usd",
+        customer: business.stripeCustomerId,
+        payment_method_types: ["card"], // ✅ only card allowed
+        metadata: {
+          promotionId: promotion.id,
+          businessId: business.id,
+        },
+        description,
+        automatic_payment_methods: { enabled: false }, // ✅ disable other auto methods
+      });
+      // Return promotion + clientSecret for frontend Payment Element
+      return res.status(201).json({
+        promotion,
+        clientSecret: paymentIntent.client_secret,
+        requiresPayment: true,
+      });
+    }
+
+    // Free promotion (price === 0)
+    console.log(
+      `✅ [CREATE PROMOTION] Free promotion created - ID: ${promotion.id}`,
+    );
+    res.status(201).json({
+      promotion,
+      clientSecret: null,
+      requiresPayment: false,
+    });
+  } catch (error) {
+    console.error("CREATE PROMOTION ERROR:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Create new promotion
 // @route   POST /api/business/promotions
 // @access  Private (Business)
@@ -142,182 +308,6 @@ const {
 //   }
 // };
 // controllers/promotionController.js
-
-const createPromotion = async (req, res) => {
-  try {
-    const business = await Business.findByPk(req.business.id);
-    if (!business)
-      return res.status(404).json({ message: "Business not found" });
-
-    const {
-      templateId,
-      imageUrl,
-      text,
-      backgroundColor,
-      category,
-      cities = [],
-      states = [],
-      timezones = [],
-      runDate,
-      stopDate,
-      runTime,
-      stopTime,
-      // price may be provided by frontend but we recalc
-    } = req.body;
-
-    // Validate subscription
-    if (
-      !business.subscriptionStart ||
-      !business.subscriptionEnd ||
-      business.subscriptionStatus !== "active"
-    ) {
-      return res.status(403).json({
-        message: "You need an active subscription to create promotions.",
-      });
-    }
-    console.log(business, "BUSINESS SUBSCRIPTION INFO");
-    const subStart = new Date(business.subscriptionStart);
-    const subEnd = new Date(business.subscriptionEnd);
-    const run = new Date(runDate);
-    const stop = new Date(stopDate);
-    if (stop > subEnd) {
-      return res.status(400).json({
-        message: `Promotion dates must be within your subscription period (${subStart.toISOString().split("T")[0]} → ${subEnd.toISOString().split("T")[0]})`,
-      });
-    }
-
-    // Pricing logic (match front-end)
-    const isOnlineStore = business.businessType === "online-ecommerce";
-    const hasEasternTimezone = timezones.some((tz) =>
-      tz.toLowerCase().includes("eastern"),
-    );
-    let baseCost = 0;
-    let stateCost = 0;
-    let timezoneCost = 0;
-
-    if (isOnlineStore) {
-      baseCost = 0; // subscription replaces baseCost for online store
-      // states: first one included? In your front-end online used base 10 includes 1 state;
-      // for subscription we choose: states charge as before EXCEPT base replaced by subscription.
-      if (states.length > 1) {
-        stateCost = (states.length - 1) * 10;
-      }
-      if (timezones.length > 0) {
-        if (hasEasternTimezone) {
-          const nonEasternCount = timezones.filter(
-            (tz) => !tz.toLowerCase().includes("eastern"),
-          ).length;
-          timezoneCost = nonEasternCount * 30 + 50;
-        } else {
-          timezoneCost = timezones.length * 30;
-        }
-      }
-    } else {
-      // Physical location pricing: states charged as before
-      if (states.length > 0) {
-        stateCost = states.length * 20;
-        baseCost = 0; // subscription replaces per-promotion base cost
-      } else {
-        baseCost = 0; // subscription replaces starter charge
-      }
-      if (timezones.length > 0) {
-        if (hasEasternTimezone) {
-          const nonEasternCount = timezones.filter(
-            (tz) => !tz.toLowerCase().includes("eastern"),
-          ).length;
-          timezoneCost = nonEasternCount * 60 + 100;
-        } else {
-          timezoneCost = timezones.length * 60;
-        }
-      }
-    }
-
-    // IMPORTANT: Cities are free up to 2 per promotion (no cost)
-    // (no city cost is added)
-
-    const subtotal = baseCost + stateCost + timezoneCost;
-    const totalPrice = subtotal; // subscription months already paid separately
-
-    // Create Promotion record (status pending until invoice paid)
-    const promotion = await Promotion.create({
-      businessId: business.id,
-      templateId,
-      imageUrl,
-      text: Array.isArray(text) ? text : text ? [text] : [],
-      backgroundColor: backgroundColor || "",
-      category: category || business.category,
-      cities,
-      states,
-      timezones,
-      runDate,
-      stopDate,
-      runTime,
-      stopTime,
-      calculatedMonths: 1, // keep but not heavily used here
-      price: totalPrice,
-      status:
-        totalPrice > 0
-          ? "pending"
-          : business.autoApprovePromotions
-            ? "inactive"
-            : "pending",
-      autoApprove: business.autoApprovePromotions || false,
-      paymentStatus: totalPrice > 0 ? "pending" : "completed",
-    });
-
-    let invoice = null;
-    // If there is an add-on cost, create invoice items and finalize invoice to charge immediately
-    if (totalPrice > 0) {
-      if (!business.stripeCustomerId) {
-        // Create stripe customer if missing
-        const customer = await stripe.customers.create({
-          email: business.email,
-          name: business.name,
-          metadata: { businessId: business.id },
-        });
-        business.stripeCustomerId = customer.id;
-        await business.save();
-      }
-
-      // Create invoice item for the add-on cost (in cents)
-      const description = `Promotion add-ons: states ${states.length}, timezones ${timezones.length} (Promotion ${promotion.id})`;
-      await stripe.invoiceItems.create({
-        customer: business.stripeCustomerId,
-        amount: Math.round(totalPrice * 100),
-        currency: "usd",
-        description,
-        metadata: { promotionId: promotion.id, businessId: business.id },
-      });
-
-      // Create and pay the invoice immediately
-      invoice = await stripe.invoices.create({
-        customer: business.stripeCustomerId,
-        auto_advance: true, // auto-finalize
-        metadata: { promotionId: promotion.id, businessId: business.id },
-      });
-
-      // Pay invoice (this charges the customer's default payment method)
-      const paidInvoice = await stripe.invoices.pay(invoice.id);
-      if (paidInvoice.status === "paid") {
-        promotion.status = business.autoApprovePromotions
-          ? "pending"
-          : "inactive";
-        promotion.paymentStatus = "completed";
-        await promotion.save();
-      } else {
-        promotion.status = "pending";
-        promotion.paymentStatus = "pending";
-        await promotion.save();
-      }
-    }
-
-    // Return promotion + invoice info (if any)
-    res.status(201).json({ promotion, invoice });
-  } catch (error) {
-    console.error("CREATE PROMOTION ERROR:", error);
-    res.status(500).json({ message: error.message });
-  }
-};
 
 // @desc    Get all business promotions
 // @route   GET /api/business/promotions

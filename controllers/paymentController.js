@@ -11,7 +11,6 @@ const handleWebhook = async (req, res) => {
     sig,
     process.env.STRIPE_WEBHOOK_SECRET,
   );
-
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
 
@@ -26,14 +25,17 @@ const handleWebhook = async (req, res) => {
       const business = await Business.findByPk(businessId);
       if (!business) return res.sendStatus(200);
 
-      const start = new Date(subscription.current_period_start * 1000);
-      const end = new Date(subscription.current_period_end * 1000);
+      const startDate = new Date(); // subscription starts today
 
-      // 🔹 Update current subscription snapshot
+      // Calculate subscription end date correctly by adding months
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + months);
+
+      // 🔹 Update business subscription info
       business.stripeSubscriptionId = subscription.id;
       business.subscriptionStatus = subscription.status;
-      business.subscriptionStart = start;
-      business.subscriptionEnd = end;
+      business.subscriptionStart = startDate;
+      business.subscriptionEnd = endDate;
       await business.save();
 
       // 🔹 Save history
@@ -46,15 +48,50 @@ const handleWebhook = async (req, res) => {
           },
         },
       );
+
       await SubscriptionHistory.create({
         businessId: business.id,
         stripeSubscriptionId: subscription.id,
         stripePriceId: subscription.items.data[0].price.id,
         businessType: business.businessType,
         months,
-        startDate: start,
-        endDate: end,
+        startDate,
+        endDate,
       });
+    }
+  }
+
+  // Handle promotion payment completion via Payment Element
+  if (event.type === "payment_intent.succeeded") {
+    const paymentIntent = event.data.object;
+    const { promotionId, businessId } = paymentIntent.metadata;
+
+    if (promotionId) {
+      const Promotion = require("../models/Promotion");
+
+      const promotion = await Promotion.findByPk(promotionId);
+      const business = await Business.findByPk(businessId);
+
+      if (promotion) {
+        promotion.paymentStatus = "completed";
+        promotion.stripePaymentId = paymentIntent.id;
+
+        // Set status based on autoApprovePromotions
+        if (business && business.autoApprovePromotions) {
+          promotion.status = "inactive"; // ready to activate
+          promotion.approvedAt = new Date();
+          console.log(
+            `✅ [WEBHOOK] Promotion ${promotionId} payment completed - Auto-approved (status: inactive)`,
+          );
+        } else {
+          promotion.status = "pending"; // awaiting admin approval
+          console.log(
+            `✅ [WEBHOOK] Promotion ${promotionId} payment completed - Pending admin approval`,
+          );
+        }
+
+        await promotion.save();
+      }
     }
   }
 
