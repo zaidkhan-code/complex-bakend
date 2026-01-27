@@ -10,14 +10,13 @@ const {
   deactivatePromotion,
   getPromotionById,
 } = require("../controllers/businessController");
-const { protect, businessOnly } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");
 const { validatePromotion } = require("../middleware/validationMiddleware");
 const {
   requireActiveSubscription,
 } = require("../middleware/subscriptionMiddleware");
 
-router.use(protect);
-router.use(businessOnly);
+router.use(protect("business"));
 
 router.get("/dashboard", getDashboard);
 router.post(

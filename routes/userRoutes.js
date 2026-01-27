@@ -8,10 +8,8 @@ const {
   getUserProfile,
   updateUserProfile,
 } = require("../controllers/userController");
-const { protect, userOnly } = require("../middleware/authMiddleware");
-
-router.use(protect);
-
+const { protect } = require("../middleware/authMiddleware");
+router.use(protect("user"));
 router.get("/profile", getUserProfile);
 router.put("/profile", updateUserProfile);
 router.post("/wishlist", addToWishlist);

@@ -16,15 +16,30 @@ const {
 router.get("/permissions", getPermission);
 
 // Get all roles
-router.get("/", protect, checkPermission("roles", "view"), getRoles);
+router.get("/", protect("admin"), checkPermission("roles", "view"), getRoles);
 
 // Create a new role
-router.post("/", protect, checkPermission("roles", "create"), createRole);
+router.post(
+  "/",
+  protect("admin"),
+  checkPermission("roles", "create"),
+  createRole,
+);
 
 // Update a role
-router.put("/:id", protect, checkPermission("roles", "edit"), updateRole);
+router.put(
+  "/:id",
+  protect("admin"),
+  checkPermission("roles", "edit"),
+  updateRole,
+);
 
 // Delete a role
-router.delete("/:id", protect, checkPermission("roles", "delete"), deleteRole);
+router.delete(
+  "/:id",
+  protect("admin"),
+  checkPermission("roles", "delete"),
+  deleteRole,
+);
 
 module.exports = router;

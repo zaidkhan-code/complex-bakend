@@ -91,14 +91,7 @@ const registerBusiness = async (req, res) => {
 
     if (business) {
       const responseData = {
-        id: business.id,
-        name: business.name,
-        email: business.email,
-        phone: business.phone,
-        categories: business.categories,
-        businessType: business.businessType,
-        personName: business.personName,
-        businessAddress: business.businessAddress,
+        ...business,
         token: generateToken(business.id, "business"),
       };
       console.log(
@@ -134,13 +127,8 @@ const login = async (req, res) => {
       const token = generateToken(account.id, "business");
 
       return res.json({
-        id: account.id,
-        email: account.email,
+        ...account?.dataValues,
         token,
-        name: account.name,
-        phone: account.phone,
-        category: account.category,
-        businessType: account.businessType || "small",
       });
     }
 

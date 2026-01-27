@@ -21,7 +21,7 @@ const {
   getUserPermissions,
 } = require("../controllers/adminController");
 
-const { protect, adminOnly } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");
 const { checkPermission } = require("../middleware/roleMiddleware");
 
 // ---------------- MULTER ----------------
@@ -37,7 +37,7 @@ const upload = multer({
 });
 
 // ---------------- MIDDLEWARE ----------------
-router.use(protect);
+router.use(protect("admin"));
 // router.use(adminOnly);
 
 // ---------------- DASHBOARD ----------------

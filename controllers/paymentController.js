@@ -1,45 +1,50 @@
-// controllers/stripeWebhook.js
 const stripe = require("../config/stripe");
 const Business = require("../models/Business");
-const SubscriptionHistory = require("../models/SubscriptionHistory");
+const Promotion = require("../models/Promotion");
+const SubscriptionTemplate = require("../models/SubscriptionTemplate");
+const BusinessSubscription = require("../models/BusinessSubscription");
 
 const handleWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
 
-  const event = stripe.webhooks.constructEvent(
-    req.body,
-    sig,
-    process.env.STRIPE_WEBHOOK_SECRET,
-  );
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET,
+    );
+  } catch (err) {
+    console.error("❌ Webhook signature verification failed.", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  /* ================================
+     SUBSCRIPTION PAYMENT COMPLETED
+  ==================================*/
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
 
-    if (session.subscription) {
+    if (session.mode === "subscription") {
       const subscription = await stripe.subscriptions.retrieve(
         session.subscription,
       );
 
-      const businessId = subscription.metadata.businessId;
-      const months = Number(subscription.metadata.months);
+      const { businessId, templateId } = session.metadata;
 
       const business = await Business.findByPk(businessId);
-      if (!business) return res.sendStatus(200);
+      const template = await SubscriptionTemplate.findByPk(templateId);
 
-      const startDate = new Date(); // subscription starts today
+      if (!business || !template) {
+        return res.json({ received: true });
+      }
 
-      // Calculate subscription end date correctly by adding months
-      const endDate = new Date(startDate);
-      endDate.setMonth(endDate.getMonth() + months);
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + template.durationMonths);
 
-      // 🔹 Update business subscription info
-      business.stripeSubscriptionId = subscription.id;
-      business.subscriptionStatus = subscription.status;
-      business.subscriptionStart = startDate;
-      business.subscriptionEnd = endDate;
-      await business.save();
-
-      // 🔹 Save history
-      await SubscriptionHistory.update(
+      // 🔴 Expire old subscriptions
+      await BusinessSubscription.update(
         { status: "expired" },
         {
           where: {
@@ -49,26 +54,33 @@ const handleWebhook = async (req, res) => {
         },
       );
 
-      await SubscriptionHistory.create({
+      // ✅ Create new active subscription
+      await BusinessSubscription.create({
         businessId: business.id,
-        stripeSubscriptionId: subscription.id,
-        stripePriceId: subscription.items.data[0].price.id,
-        businessType: business.businessType,
-        months,
+        subscriptionTemplateId: template.id,
         startDate,
         endDate,
+        freeCities: template.freeCities,
+        freeStates: template.freeStates,
+        freeTimezones: template.freeTimezones,
+        stripeSubscriptionId: subscription.id,
+        status: "active",
       });
+
+      console.log(
+        `✅ [WEBHOOK] Subscription activated for business ${business.id}`,
+      );
     }
   }
 
-  // Handle promotion payment completion via Payment Element
+  /* ================================
+     PROMOTION ADD-ON PAYMENT SUCCESS
+  ==================================*/
   if (event.type === "payment_intent.succeeded") {
     const paymentIntent = event.data.object;
     const { promotionId, businessId } = paymentIntent.metadata;
 
     if (promotionId) {
-      const Promotion = require("../models/Promotion");
-
       const promotion = await Promotion.findByPk(promotionId);
       const business = await Business.findByPk(businessId);
 
@@ -76,27 +88,24 @@ const handleWebhook = async (req, res) => {
         promotion.paymentStatus = "completed";
         promotion.stripePaymentId = paymentIntent.id;
 
-        // Set status based on autoApprovePromotions
-        if (business && business.autoApprovePromotions) {
-          promotion.status = "inactive"; // ready to activate
+        if (business?.autoApprovePromotions) {
+          promotion.status = "inactive";
           promotion.approvedAt = new Date();
-          console.log(
-            `✅ [WEBHOOK] Promotion ${promotionId} payment completed - Auto-approved (status: inactive)`,
-          );
         } else {
-          promotion.status = "pending"; // awaiting admin approval
-          console.log(
-            `✅ [WEBHOOK] Promotion ${promotionId} payment completed - Pending admin approval`,
-          );
+          promotion.status = "pending";
         }
 
         await promotion.save();
+
+        console.log(`✅ [WEBHOOK] Promotion ${promotionId} payment completed`);
       }
     }
   }
 
   res.json({ received: true });
 };
+
+module.exports = handleWebhook;
 
 // const stripe = require("../config/stripe");
 // const Promotion = require("../models/Promotion");
