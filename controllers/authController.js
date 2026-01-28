@@ -91,7 +91,7 @@ const registerBusiness = async (req, res) => {
 
     if (business) {
       const responseData = {
-        ...business,
+        ...business?.dataValues,
         token: generateToken(business.id, "business"),
       };
       console.log(
