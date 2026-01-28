@@ -181,8 +181,6 @@ const getUserPermissions = async (userId) => {
 };
 
 module.exports = {
-  isAdmin,
-  isSuperAdmin,
   checkPermission,
   checkUserPermission,
   getUserPermissions,

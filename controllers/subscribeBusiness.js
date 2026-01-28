@@ -38,29 +38,34 @@ const createSubscriptionCheckout = async (req, res) => {
       businessId: business.id,
       templateId: template.id,
     },
-    success_url: `${process.env.FRONTEND_URL}/subscription-success`,
-    cancel_url: `${process.env.FRONTEND_URL}/subscription-cancel`,
+    success_url: `${process.env.FRONTEND_URL}/business/subscription-success`,
+    cancel_url: `${process.env.FRONTEND_URL}/business/subscription-cancel`,
   });
 
   res.json({ url: session.url });
 };
 
 const getActiveSubscription = async (req, res) => {
-  const subscription = await BusinessSubscription.findOne({
-    where: {
-      businessId: req.business.id,
-      status: "active",
-    },
-    include: [
-      {
-        model: SubscriptionTemplate,
-        attributes: ["name", "durationMonths", "price"],
+  try {
+    const subscription = await BusinessSubscription.findOne({
+      where: {
+        businessId: req.business.id,
+        status: "active",
       },
-    ],
-    order: [["endDate", "DESC"]],
-  });
+      include: [
+        {
+          model: SubscriptionTemplate,
+          as: "template", // <- must match the alias in the association
+        },
+      ],
+      order: [["endDate", "DESC"]],
+    });
 
-  res.json(subscription || null);
+    res.json(subscription || null);
+  } catch (error) {
+    console.error("Error fetching active subscription:", error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 const getSubscriptionHistory = async (req, res) => {

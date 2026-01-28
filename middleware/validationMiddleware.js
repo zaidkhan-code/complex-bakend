@@ -50,9 +50,6 @@ const validatePromotion = [
   body("stopTime")
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
     .withMessage("Valid stop time is required (HH:MM)"),
-  body("price")
-    .isFloat({ min: 0 })
-    .withMessage("Price must be a positive number"),
   validate,
 ];
 

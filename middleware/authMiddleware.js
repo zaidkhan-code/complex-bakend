@@ -56,7 +56,7 @@ const protect = (role) => async (req, res, next) => {
         .status(403)
         .json({ message: "Account is blocked or suspended" });
 
-    const userType = user.role?.name === "admin" ? "admin" : "user";
+    const userType = user.accountType === "admin" ? "admin" : "user";
 
     // Role check
     if (role && role !== userType) {

@@ -1,32 +1,32 @@
-const Business  = require("../models/Business");
+const BusinessSubscription = require("../models/BusinessSubscription");
 
 const requireActiveSubscription = async (req, res, next) => {
   try {
-    const business = await Business.findByPk(req.business.id);
+    const subscription = await BusinessSubscription.findOne({
+      where: {
+        businessId: req.business.id,
+        status: "active",
+      },
+    });
 
-    if (!business) {
-      return res.status(404).json({ message: "Business not found" });
-    }
-
-    if (
-      business.subscriptionStatus !== "active" ||
-      !business.subscriptionStart ||
-      !business.subscriptionEnd
-    ) {
+    if (!subscription) {
       return res.status(403).json({
         message: "Active subscription required",
       });
     }
 
-    // Check expiry (extra safety)
-    if (new Date(business.subscriptionEnd) < new Date()) {
-      business.subscriptionStatus = "expired";
-      await business.save();
+    // Extra safety: expiry check
+    if (new Date(subscription.endDate) < new Date()) {
+      subscription.status = "expired";
+      await subscription.save();
 
       return res.status(403).json({
         message: "Your subscription has expired",
       });
     }
+
+    // Attach subscription to request (VERY useful)
+    req.activeSubscription = subscription;
 
     next();
   } catch (error) {

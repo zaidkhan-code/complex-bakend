@@ -45,18 +45,13 @@ const createPromotion = async (req, res) => {
     const run = new Date(runDate);
     const stop = new Date(stopDate);
 
-    if (run < subStart || stop > subEnd) {
-      return res.status(400).json({
-        message: `Promotion must run within subscription period (${
-          subStart.toISOString().split("T")[0]
-        } → ${subEnd.toISOString().split("T")[0]})`,
-      });
-    }
-
-    /* ==========================================
-       FREE LIMITS FROM SUBSCRIPTION
-    ========================================== */
-    const freeCities = subscription.freeCities || 0;
+    // if (run < subStart || stop > subEnd) {
+    //   return res.status(400).json({
+    //     message: `Promotion must run within subscription period (${
+    //       subStart.toISOString().split("T")[0]
+    //     } → ${subEnd.toISOString().split("T")[0]})`,
+    //   });
+    // }
     const freeStates = subscription.freeStates || 0;
     const freeTimezones = subscription.freeTimezones || 0;
 
@@ -149,8 +144,9 @@ const createPromotion = async (req, res) => {
         payment_method_types: ["card"],
         metadata: {
           promotionId: promotion.id,
-           businessId: business.id,
+          businessId: business.id,
         },
+        // automatic_payment_methods: { enabled: true },
         description: `Promotion add-ons: ${extraStates} extra states, ${extraTimezones} extra timezones`,
       });
 
