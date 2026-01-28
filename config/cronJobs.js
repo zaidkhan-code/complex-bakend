@@ -28,24 +28,32 @@ const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
   }
 });
 
-// ======================
-// CRON: Expire Promotions after End Date/Time
-// ======================
-const expirePromotions = cron.schedule("*/10 * * * *", async () => {
+const expirePromotions = cron.schedule("0 0 * * *", async () => {
   try {
     const now = new Date();
-    const promotions = await Promotion.findAll({ where: { status: "active" } });
+
+    // Today in YYYY-MM-DD (server timezone)
+    const today = now.toISOString().split("T")[0];
+
+    const promotions = await Promotion.findAll({
+      where: {
+        status: {
+          [Op.not]: "expired",
+        },
+        stopDate: {
+          [Op.lt]: today, // expired as soon as date rolls over
+        },
+      },
+    });
 
     for (const promo of promotions) {
-      const endDateTime = new Date(`${promo.stopDate} ${promo.stopTime}`);
-      if (now > endDateTime) {
-        promo.status = "expired";
-        await promo.save();
-        console.log(`⏳ Promotion ${promo.id} expired`);
-      }
+      promo.status = "expired";
+      await promo.save();
+
+      console.log(`⏳ Promotion expired at 12:00 AM | ID: ${promo.id}`);
     }
   } catch (error) {
-    console.error("Error in expire cron:", error);
+    console.error("❌ Error in expire promotions cron:", error);
   }
 });
 const startCronJobs = () => {
