@@ -38,9 +38,13 @@ const Promotion = sequelize.define(
       defaultValue: "",
       comment: "Background color for the promotion card",
     },
-    category: {
-      type: DataTypes.STRING,
-    },
+  categories: {
+  type: DataTypes.ARRAY(DataTypes.STRING),
+  allowNull: false,
+  defaultValue: [],
+  comment: "Array of promotion categories (slug format)",
+},
+
     // Support multiple cities/states/timezones for a promotion (JSON arrays)
     cities: {
       type: DataTypes.JSONB,

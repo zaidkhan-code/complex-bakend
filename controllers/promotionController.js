@@ -14,53 +14,90 @@ const {
 
 const getPromotions = async (req, res) => {
   try {
-    const { city, state, timezone, category } = req.query;
+    const {
+      city,
+      state,
+      timezone,
+      category, // comma separated or array
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const offset = (page - 1) * limit;
 
     const where = {
       status: "active",
     };
 
-    if (category) {
-      where.category = category;
-    }
+    /* ======================================================
+       ✅ CATEGORY FILTER (ARRAY STRING MATCH)
+       Uses PostgreSQL overlap operator: &&
+       Means: at least ONE category must match
+    ====================================================== */
+   if (category) {
+  const categories = Array.isArray(category)
+    ? category
+    : category.split(",").map(c => c.trim());
 
-    // Build priority scoring
-    // City exact match gets highest score → 3
-    // State code exact match → 2
-    // Timezone match → 1
+  where[Op.and] = [
+    literal(`
+      "Promotion"."categories" && ARRAY[${categories
+        .map(c => `'${c}'`)
+        .join(",")}]::text[]
+    `),
+  ];
+}
+
+
+    /* ======================================================
+       ✅ PRIORITY ORDERING
+    ====================================================== */
     const orderPriority = literal(`
       (CASE
-        WHEN cities @> '[{"state_code":"${state}"}]' THEN 2
+        WHEN cities @> '[{"name":"${city}"}]' THEN 3
+        WHEN states @> '[{"state_code":"${state}"}]' THEN 2
         WHEN timezones @> '["${timezone}"]' THEN 1
         ELSE 0
       END) DESC
     `);
 
-    // Combined where with fallback: city OR state OR timezone
-    const promotions = await Promotion.findAll({
-      where: {
-        ...where,
-        [Op.or]: [
-          city && { cities: { [Op.contains]: [{ name: city }] } },
-          state && { states: { [Op.contains]: [{ state_code: state }] } },
-          timezone && { timezones: { [Op.contains]: [timezone] } },
-        ].filter(Boolean),
-      },
-      include: [
-        {
-          model: Business,
-          as: "business",
-          attributes: ["name", "categories", "businessAddress"],
+    const { rows: promotions, count } =
+      await Promotion.findAndCountAll({
+        where: {
+          ...where,
+          [Op.or]: [
+            city && { cities: { [Op.contains]: [{ name: city }] } },
+            state && { states: { [Op.contains]: [{ state_code: state }] } },
+            timezone && { timezones: { [Op.contains]: [timezone] } },
+          ].filter(Boolean),
         },
-      ],
-      order: [orderPriority, ["createdAt", "DESC"]],
-    });
+        include: [
+          {
+            model: Business,
+            as: "business",
+            attributes: ["name", "categories", "businessAddress"],
+          },
+        ],
+        order: [orderPriority, ["createdAt", "DESC"]],
+        limit: Number(limit),
+        offset: Number(offset),
+        distinct: true,
+      });
 
-    res.json(promotions);
+    res.json({
+      success: true,
+      total: count,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(count / limit),
+      promotions,
+    });
   } catch (error) {
+    console.error("Promotion Fetch Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 
 // @desc    Get single promotion
 // @route   GET /api/promotions/:id

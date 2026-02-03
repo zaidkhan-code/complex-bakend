@@ -10,6 +10,7 @@ const {
 const createPromotion = async (req, res) => {
   try {
     const business = await Business.findByPk(req.business.id);
+    console.log(business, "business")
     if (!business) {
       return res.status(404).json({ message: "Business not found" });
     }
@@ -103,7 +104,7 @@ const createPromotion = async (req, res) => {
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      category: category || business.category,
+      categories: business.categories,
       cities,
       states,
       timezones,
@@ -386,7 +387,7 @@ const updatePromotion = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    const { imageUrl, text, backgroundColor, runTime, stopTime } = req.body;
+    const { imageUrl, text, backgroundColor, runTime, stopTime  ,states,cities} = req.body;
 
     // Allow editing: image, text (content & styling), background color, runTime, stopTime
     // Location, state, runDate, stopDate cannot be changed
@@ -405,7 +406,14 @@ const updatePromotion = async (req, res) => {
     if (runTime) {
       promotion.runTime = runTime;
     }
+    if (states) {
+      promotion.states = states;
+    }
 
+    if (
+cities) {
+      promotion.cities= cities;
+    }
     if (stopTime) {
       promotion.stopTime = stopTime;
     }
