@@ -11,6 +11,7 @@ const paymentRoutes = require("./paymentRoutes");
 const subscriptionRoutes = require("./subscriptionRoutes");
 const subscriptionsTemplateRoutes = require("./subscriptionsTemplateRoutes");
 const roleRoutes = require("./roleRoutes");
+const wishlistRoutes = require("./wishlistRoutes");
 
 // Import models
 const Business = require("../models/Business");
@@ -18,6 +19,7 @@ const Promotion = require("../models/Promotion");
 const Template = require("../models/Template");
 const User = require("../models/User");
 const Role = require("../models/Role");
+const Wishlist = require("../models/Wishlist");
 const { default: axios } = require("axios");
 const SubscriptionHistory = require("../models/SubscriptionHistory");
 const BusinessSubscription = require("../models/BusinessSubscription");
@@ -70,6 +72,43 @@ const setupModelRelationships = () => {
     foreignKey: "subscriptionTemplateId",
     as: "template",
   });
+
+  // 🔹 Wishlist Relationships
+  // A Wishlist entry belongs to a User (optional)
+  Wishlist.belongsTo(User, {
+    foreignKey: "userId",
+    as: "user",
+  });
+
+  // A User has many Wishlist entries
+  User.hasMany(Wishlist, {
+    foreignKey: "userId",
+    as: "wishlistItems",
+  });
+
+  // A Wishlist entry belongs to a Business (optional)
+  Wishlist.belongsTo(Business, {
+    foreignKey: "businessId",
+    as: "savedByBusiness",
+  });
+
+  // A Business has many Wishlist entries
+  Business.hasMany(Wishlist, {
+    foreignKey: "businessId",
+    as: "savedPromotions",
+  });
+
+  // A Wishlist entry belongs to a Promotion
+  Wishlist.belongsTo(Promotion, {
+    foreignKey: "promotionId",
+    as: "Promotion",
+  });
+
+  // A Promotion has many Wishlist entries
+  Promotion.hasMany(Wishlist, {
+    foreignKey: "promotionId",
+    as: "wishlists",
+  });
 };
 
 /**
@@ -93,6 +132,7 @@ const setupRoutes = (app) => {
   app.use("/api/payment", paymentRoutes);
   app.use("/api/subscription", subscriptionRoutes);
   app.use("/api/subscription-template", subscriptionsTemplateRoutes);
+  app.use("/api/wishlist", wishlistRoutes);
   app.get("/api/locationtest", async (req, res) => {
     try {
       const ip =
@@ -130,4 +170,5 @@ module.exports = {
   promotionRoutes,
   paymentRoutes,
   roleRoutes,
+  wishlistRoutes,
 };
