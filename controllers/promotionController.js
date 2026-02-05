@@ -11,14 +11,13 @@ const {
 // @desc    Get all promotions with filters
 // @route   GET /api/promotions
 // @access  Public
-
 const getPromotions = async (req, res) => {
   try {
     const {
       city,
       state,
       timezone,
-      category, // comma separated or array
+      category, // array of business categories from frontend
       page = 1,
       limit = 20,
     } = req.query;
@@ -29,29 +28,6 @@ const getPromotions = async (req, res) => {
       status: "active",
     };
 
-    /* ======================================================
-       ✅ CATEGORY FILTER (ARRAY STRING MATCH)
-       Uses PostgreSQL overlap operator: &&
-       Means: at least ONE category must match
-    ====================================================== */
-   if (category) {
-  const categories = Array.isArray(category)
-    ? category
-    : category.split(",").map(c => c.trim());
-
-  where[Op.and] = [
-    literal(`
-      "Promotion"."categories" && ARRAY[${categories
-        .map(c => `'${c}'`)
-        .join(",")}]::text[]
-    `),
-  ];
-}
-
-
-    /* ======================================================
-       ✅ PRIORITY ORDERING
-    ====================================================== */
     const orderPriority = literal(`
       (CASE
         WHEN cities @> '[{"name":"${city}"}]' THEN 3
@@ -61,28 +37,45 @@ const getPromotions = async (req, res) => {
       END) DESC
     `);
 
-    const { rows: promotions, count } =
-      await Promotion.findAndCountAll({
-        where: {
-          ...where,
-          [Op.or]: [
-            city && { cities: { [Op.contains]: [{ name: city }] } },
-            state && { states: { [Op.contains]: [{ state_code: state }] } },
-            timezone && { timezones: { [Op.contains]: [timezone] } },
-          ].filter(Boolean),
+    /* ======================================================
+       ✅ FETCH PROMOTIONS
+       Business category filter works with JSONB now
+    ====================================================== */
+    const businessCategoryFilter =
+      category && Array.isArray(category)
+        ? category
+        : category
+          ? category.split(",").map((c) => c.trim())
+          : null;
+
+    const { rows: promotions, count } = await Promotion.findAndCountAll({
+      where: {
+        ...where,
+        [Op.or]: [
+          city && { cities: { [Op.contains]: [{ name: city }] } },
+          state && { states: { [Op.contains]: [{ state_code: state }] } },
+          timezone && { timezones: { [Op.contains]: [timezone] } },
+        ].filter(Boolean),
+      },
+      include: [
+        {
+          model: Business,
+          as: "business",
+          attributes: ["name", "categories", "businessAddress"],
+          where: businessCategoryFilter
+            ? literal(`
+              "business"."categories" ?| array[${businessCategoryFilter
+                .map((c) => `'${c}'`)
+                .join(",")}]
+            `)
+            : undefined,
         },
-        include: [
-          {
-            model: Business,
-            as: "business",
-            attributes: ["name", "categories", "businessAddress"],
-          },
-        ],
-        order: [orderPriority, ["createdAt", "DESC"]],
-        limit: Number(limit),
-        offset: Number(offset),
-        distinct: true,
-      });
+      ],
+      order: [orderPriority, ["createdAt", "DESC"]],
+      limit: Number(limit),
+      offset: Number(offset),
+      distinct: true,
+    });
 
     res.json({
       success: true,
@@ -98,6 +91,7 @@ const getPromotions = async (req, res) => {
   }
 };
 
+module.exports = getPromotions;
 
 // @desc    Get single promotion
 // @route   GET /api/promotions/:id
