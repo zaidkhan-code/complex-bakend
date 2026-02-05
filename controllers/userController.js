@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const { uploadImageToCloudinary } = require("../utils/cloudinaryUtils");
 
 const Business = require("../models/Business");
 const Promotion = require("../models/Promotion");
@@ -107,6 +108,30 @@ const updateUserProfile = async (req, res) => {
     if (city) user.city = city;
     if (state) user.state = state;
 
+    // If an avatar file is uploaded, send to Cloudinary and save secure URL
+    if (req.file && req.file.buffer) {
+      try {
+        const cloudResult = await uploadImageToCloudinary(
+          req.file.buffer,
+          "avatars",
+        );
+
+        if (
+          cloudResult &&
+          cloudResult.success &&
+          cloudResult.data &&
+          cloudResult.data.url
+        ) {
+          user.avatarUrl = cloudResult.data.url;
+        } else {
+          throw new Error(cloudResult.error || "Cloudinary upload failed");
+        }
+      } catch (err) {
+        console.error("Avatar upload failed:", err.message || err);
+        return res.status(500).json({ message: "Failed to upload avatar" });
+      }
+    }
+
     await user.save();
 
     res.json({
@@ -116,6 +141,7 @@ const updateUserProfile = async (req, res) => {
       city: user.city,
       state: user.state,
       timezone: user.timezone,
+      avatarUrl: user.avatarUrl,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

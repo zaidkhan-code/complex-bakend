@@ -50,6 +50,12 @@ const User = sequelize.define(
       defaultValue: false,
       comment: "SuperAdmin has all permissions",
     },
+    // Avatar URL (Cloudinary secure URL)
+    avatarUrl: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "User profile avatar image URL",
+    },
     status: {
       type: DataTypes.ENUM("active", "inactive", "blocked", "suspended"),
       defaultValue: "active",

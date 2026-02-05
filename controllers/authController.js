@@ -169,6 +169,7 @@ const login = async (req, res) => {
       email: account.email,
       token,
       fullName: account.fullName,
+      avatarUrl: account.avatarUrl,
     };
 
     // =========================
