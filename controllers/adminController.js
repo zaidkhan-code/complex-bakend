@@ -470,9 +470,9 @@ const changePromotionStatus = async (req, res) => {
     const { promotionId } = req.params;
     const { status } = req.body;
 
-    if (![, "inactive", "pending"].includes(status)) {
+    if (!["inactive", "pending", "active"].includes(status)) {
       return res.status(400).json({
-        message: "Invalid status. Must be one of:  inactive, pending",
+        message: "Invalid status. Must be one of: active, inactive, pending",
       });
     }
 
@@ -493,7 +493,7 @@ const changePromotionStatus = async (req, res) => {
     const oldStatus = promotion.status;
     promotion.status = status;
 
-    // Set approvedAt timestamp when admin approves
+    // Set approvedAt timestamp when admin approves (marking inactive as approved)
     if (status === "inactive" && oldStatus == "pending") {
       promotion.approvedAt = new Date();
     }
@@ -516,6 +516,201 @@ const changePromotionStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Error changing promotion status:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Run a promotion: set this promotion active and set all other promotions for the same business inactive
+const runPromotion = async (req, res) => {
+  const { promotionId } = req.params;
+  const sequelize = Promotion.sequelize;
+
+  try {
+    const promotion = await Promotion.findByPk(promotionId);
+    if (!promotion)
+      return res.status(404).json({ message: "Promotion not found" });
+
+    // Run in a transaction to ensure consistency
+    await sequelize.transaction(async (t) => {
+      // Deactivate all other promotions for this business
+      await Promotion.update(
+        { status: "inactive" },
+        {
+          where: {
+            businessId: promotion.businessId,
+            id: { [Op.ne]: promotion.id },
+          },
+          transaction: t,
+        },
+      );
+
+      // Activate selected promotion
+      promotion.status = "active";
+      promotion.approvedAt = promotion.approvedAt || new Date();
+      await promotion.save({ transaction: t });
+    });
+
+    console.log(`✅ [ADMIN] Promotion ${promotionId} is now active`);
+    res.json({ message: "Promotion activated for business", promotion });
+  } catch (error) {
+    console.error("Error running promotion:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get a single promotion (admin)
+// @route   GET /api/admin/promotions/:id
+// @access  Private (Admin)
+const getPromotionById = async (req, res) => {
+  try {
+    const promotion = await Promotion.findByPk(req.params.id, {
+      include: [
+        {
+          model: Business,
+          as: "business",
+          attributes: [
+            "id",
+            "name",
+            "email",
+            "businessType",
+            "autoApprovePromotions",
+            "status",
+          ],
+        },
+      ],
+    });
+
+    if (!promotion)
+      return res.status(404).json({ message: "Promotion not found" });
+
+    res.json({ promotion });
+  } catch (error) {
+    console.error("Error fetching promotion:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update promotion (admin)
+// @route   PUT /api/admin/promotions/:id
+// @access  Private (Admin)
+const updatePromotion = async (req, res) => {
+  try {
+    const promotion = await Promotion.findByPk(req.params.id);
+    if (!promotion)
+      return res.status(404).json({ message: "Promotion not found" });
+
+    const {
+      templateId,
+      imageUrl,
+      text,
+      backgroundColor,
+      cities = [],
+      states = [],
+      timezones = [],
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      categories = [],
+    } = req.body;
+
+    // Basic validation
+    if (!runDate || !stopDate || !runTime || !stopTime) {
+      return res
+        .status(400)
+        .json({ message: "Missing schedule or time fields" });
+    }
+
+    promotion.templateId = templateId;
+    promotion.imageUrl = imageUrl || promotion.imageUrl;
+    promotion.text = Array.isArray(text)
+      ? text
+      : text
+        ? [text]
+        : promotion.text;
+    promotion.backgroundColor = backgroundColor || promotion.backgroundColor;
+    promotion.cities = cities;
+    promotion.states = states;
+    promotion.timezones = timezones;
+    promotion.runDate = runDate;
+    promotion.stopDate = stopDate;
+    promotion.runTime = runTime;
+    promotion.stopTime = stopTime;
+    promotion.categories = categories;
+
+    // Admin edits should not change price for now (keep as is)
+
+    await promotion.save();
+
+    console.log(`✅ [ADMIN] Promotion ${promotion.id} updated by admin`);
+    res.json({ message: "Promotion updated", promotion });
+  } catch (error) {
+    console.error("Error updating promotion:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Create promotion for a given business (admin)
+// @route   POST /api/admin/businesses/:businessId/promotions
+// @access  Private (Admin)
+const createPromotionForBusiness = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const business = await Business.findByPk(businessId);
+
+    if (!business) {
+      return res.status(404).json({ message: "Business not found" });
+    }
+
+    const {
+      templateId,
+      imageUrl,
+      text,
+      backgroundColor,
+      category,
+      cities = [],
+      states = [],
+      timezones = [],
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+    } = req.body;
+
+    // Simple validation
+    if (!runDate || !stopDate || !runTime || !stopTime) {
+      return res
+        .status(400)
+        .json({ message: "Missing schedule or time fields" });
+    }
+    const promotion = await Promotion.create({
+      businessId: business.id,
+      templateId,
+      imageUrl,
+      text: Array.isArray(text) ? text : text ? [text] : [],
+      backgroundColor: backgroundColor || "",
+      categories: business.categories || [],
+      cities,
+      states,
+      timezones,
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      price: 0, // Admin does not pay
+      status: "inactive", // Admin-created and approved but not active
+      autoApprove: true,
+      paymentStatus: "completed",
+      approvedAt: new Date(),
+    });
+
+    console.log(
+      `✅ [ADMIN] Promotion created for business ${business.id} - ID: ${promotion.id}`,
+    );
+
+    res.status(201).json({ promotion });
+  } catch (error) {
+    console.error("ADMIN CREATE PROMOTION ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -740,10 +935,14 @@ module.exports = {
   updateBusinessStatus,
   getAllPromotions,
   deletePromotion,
+  getPromotionById,
+  updatePromotion,
+  createPromotionForBusiness,
   getAdminDashboard,
   uploadTemplateImage,
   getAllTemplates,
   deleteTemplate,
   createAdminUser,
   getUserPermissions,
+  runPromotion,
 };

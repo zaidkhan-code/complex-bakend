@@ -11,11 +11,13 @@ const {
   deletePromotion,
   changePromotionStatus,
   toggleBusinessAutoApprove,
+  createPromotionForBusiness,
   getAdminDashboard,
   uploadTemplateImage,
   getAllTemplates,
   updateAdminRole,
   makeAdmin,
+  runPromotion,
   deleteTemplate,
   createAdminUser,
   getUserPermissions,
@@ -94,6 +96,36 @@ router.put(
   "/promotions/:promotionId/status",
   checkPermission("promotions", "approve"),
   changePromotionStatus,
+);
+
+// Run a promotion (activate for its business and deactivate others)
+router.post(
+  "/promotions/:promotionId/run",
+  checkPermission("promotions", "approve"),
+  runPromotion,
+);
+
+// Get single promotion
+router.get(
+  "/promotions/:id",
+  checkPermission("promotions", "view"),
+  (req, res, next) =>
+    require("../controllers/adminController").getPromotionById(req, res, next),
+);
+
+// Update promotion
+router.put(
+  "/promotions/:id",
+  checkPermission("promotions", "edit"),
+  (req, res, next) =>
+    require("../controllers/adminController").updatePromotion(req, res, next),
+);
+
+// Create promotion for any business (admin)
+router.post(
+  "/businesses/:businessId/promotions",
+  checkPermission("promotions", "create"),
+  createPromotionForBusiness,
 );
 
 // ---------------- TEMPLATES ----------------

@@ -16,6 +16,7 @@ module.exports = {
     "view",
     "edit",
     "delete",
+    "create",
     "approve", // 🔥 approve / change status
     "auto_approve", // 🔥 auto approval handling
   ],
