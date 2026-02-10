@@ -123,7 +123,7 @@ router.put(
 
 // Create promotion for any business (admin)
 router.post(
-  "/businesses/:businessId/promotions",
+  "/promotions",
   checkPermission("promotions", "create"),
   createPromotionForBusiness,
 );

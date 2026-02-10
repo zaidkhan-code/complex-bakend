@@ -11,7 +11,7 @@ const Promotion = sequelize.define(
     },
     businessId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       references: {
         model: "Businesses",
         key: "id",
@@ -38,12 +38,12 @@ const Promotion = sequelize.define(
       defaultValue: "",
       comment: "Background color for the promotion card",
     },
-  categories: {
-  type: DataTypes.ARRAY(DataTypes.STRING),
-  allowNull: false,
-  defaultValue: [],
-  comment: "Array of promotion categories (slug format)",
-},
+    categories: {
+      type: DataTypes.ARRAY(DataTypes.STRING),
+      allowNull: false,
+      defaultValue: [],
+      comment: "Array of promotion categories (slug format)",
+    },
 
     // Support multiple cities/states/timezones for a promotion (JSON arrays)
     cities: {
@@ -106,6 +106,11 @@ const Promotion = sequelize.define(
       defaultValue: "pending",
       comment: "Payment status from Stripe",
     },
+    metadata: {
+      type: DataTypes.JSONB,
+      defaultValue: {},
+      comment: "Flexible metadata store for custom data",
+    },
     views: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
@@ -120,7 +125,7 @@ const Promotion = sequelize.define(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 module.exports = Promotion;

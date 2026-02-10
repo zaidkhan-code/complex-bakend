@@ -476,15 +476,7 @@ const changePromotionStatus = async (req, res) => {
       });
     }
 
-    const promotion = await Promotion.findByPk(promotionId, {
-      include: [
-        {
-          model: Business,
-          as: "business",
-          attributes: ["id", "name", "autoApprovePromotions"],
-        },
-      ],
-    });
+    const promotion = await Promotion.findByPk(promotionId);
 
     if (!promotion) {
       return res.status(404).json({ message: "Promotion not found" });
@@ -508,7 +500,6 @@ const changePromotionStatus = async (req, res) => {
       message: `Promotion status updated from ${oldStatus} to ${status}`,
       promotion: {
         id: promotion.id,
-        businessId: promotion.businessId,
         status: promotion.status,
         approvedAt: promotion.approvedAt,
         createdAt: promotion.createdAt,
@@ -523,32 +514,14 @@ const changePromotionStatus = async (req, res) => {
 // Run a promotion: set this promotion active and set all other promotions for the same business inactive
 const runPromotion = async (req, res) => {
   const { promotionId } = req.params;
-  const sequelize = Promotion.sequelize;
-
   try {
     const promotion = await Promotion.findByPk(promotionId);
     if (!promotion)
       return res.status(404).json({ message: "Promotion not found" });
 
-    // Run in a transaction to ensure consistency
-    await sequelize.transaction(async (t) => {
-      // Deactivate all other promotions for this business
-      await Promotion.update(
-        { status: "inactive" },
-        {
-          where: {
-            businessId: promotion.businessId,
-            id: { [Op.ne]: promotion.id },
-          },
-          transaction: t,
-        },
-      );
-
-      // Activate selected promotion
-      promotion.status = "active";
-      promotion.approvedAt = promotion.approvedAt || new Date();
-      await promotion.save({ transaction: t });
-    });
+    promotion.status = "active";
+    promotion.approvedAt = promotion.approvedAt || new Date();
+    await promotion.save();
 
     console.log(`✅ [ADMIN] Promotion ${promotionId} is now active`);
     res.json({ message: "Promotion activated for business", promotion });
@@ -610,6 +583,7 @@ const updatePromotion = async (req, res) => {
       runDate,
       stopDate,
       runTime,
+      metadata,
       stopTime,
       categories = [],
     } = req.body;
@@ -637,6 +611,7 @@ const updatePromotion = async (req, res) => {
     promotion.runTime = runTime;
     promotion.stopTime = stopTime;
     promotion.categories = categories;
+    promotion.metadata = metadata;
 
     // Admin edits should not change price for now (keep as is)
 
@@ -655,13 +630,6 @@ const updatePromotion = async (req, res) => {
 // @access  Private (Admin)
 const createPromotionForBusiness = async (req, res) => {
   try {
-    const { businessId } = req.params;
-    const business = await Business.findByPk(businessId);
-
-    if (!business) {
-      return res.status(404).json({ message: "Business not found" });
-    }
-
     const {
       templateId,
       imageUrl,
@@ -674,6 +642,7 @@ const createPromotionForBusiness = async (req, res) => {
       runDate,
       stopDate,
       runTime,
+      metadata,
       stopTime,
     } = req.body;
 
@@ -684,16 +653,18 @@ const createPromotionForBusiness = async (req, res) => {
         .json({ message: "Missing schedule or time fields" });
     }
     const promotion = await Promotion.create({
-      businessId: business.id,
+      // businessId: business.id,
       templateId,
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      categories: business.categories || [],
+      // categories: business.categories || [],
       cities,
       states,
+      metadata,
       timezones,
       runDate,
+      metadata: { ...metadata, createdBy: "admin" },
       stopDate,
       runTime,
       stopTime,
@@ -703,11 +674,6 @@ const createPromotionForBusiness = async (req, res) => {
       paymentStatus: "completed",
       approvedAt: new Date(),
     });
-
-    console.log(
-      `✅ [ADMIN] Promotion created for business ${business.id} - ID: ${promotion.id}`,
-    );
-
     res.status(201).json({ promotion });
   } catch (error) {
     console.error("ADMIN CREATE PROMOTION ERROR:", error);
