@@ -13,34 +13,23 @@ const {
 // @access  Public
 const getPromotions = async (req, res) => {
   try {
-    const {
-      city,
-      state,
-      timezone,
-      category, // array of business categories from frontend
-      page = 1,
-      limit = 20,
-    } = req.query;
+    // -------------------------------
+    // 1️⃣ Extract and normalize query params
+    // -------------------------------
+    const normalize = (v) => v?.toString().trim().toLowerCase();
 
+    const country_code = req.query.country_code;
+    const state = req.query.state;
+    const city = req.query.city;
+    const timezone = normalize(req.query.timezone);
+    const category = req.query.category;
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 20);
     const offset = (page - 1) * limit;
 
-    const where = {
-      status: "active",
-    };
-
-    const orderPriority = literal(`
-      (CASE
-        WHEN cities @> '[{"name":"${city}"}]' THEN 3
-        WHEN states @> '[{"state_code":"${state}"}]' THEN 2
-        WHEN timezones @> '["${timezone}"]' THEN 1
-        ELSE 0
-      END) DESC
-    `);
-
-    /* ======================================================
-       ✅ FETCH PROMOTIONS
-       Business category filter works with JSONB now
-    ====================================================== */
+    // -------------------------------
+    // 2️⃣ Business category filter
+    // -------------------------------
     const businessCategoryFilter =
       category && Array.isArray(category)
         ? category
@@ -48,40 +37,83 @@ const getPromotions = async (req, res) => {
           ? category.split(",").map((c) => c.trim())
           : null;
 
+    // -------------------------------
+    // 3️⃣ Build location filters
+    // -------------------------------
+    const locationFilters = [];
+
+    if (country_code) {
+      locationFilters.push(
+        { cities: { [Op.contains]: [{ country_code }] } },
+        { states: { [Op.contains]: [{ country_code }] } },
+      );
+    }
+
+    if (state) {
+      locationFilters.push({
+        states: { [Op.contains]: [{ state_code: state }] },
+      });
+    }
+
+    if (city) {
+      locationFilters.push({ cities: { [Op.contains]: [{ name: city }] } });
+    }
+
+    if (timezone) {
+      locationFilters.push({ timezones: { [Op.contains]: [timezone] } });
+    }
+
+    const whereCondition = {
+      status: "active",
+      ...(locationFilters.length ? { [Op.or]: locationFilters } : {}),
+    };
+
+    // -------------------------------
+    // 4️⃣ Define order priority (closest match first)
+    // -------------------------------
+    const orderPriority = literal(`
+      (CASE
+        WHEN cities @> '[{"name":"${city}"}]' THEN 4
+        WHEN states @> '[{"state_code":"${state}"}]' THEN 3
+        WHEN cities @> '[{"country_code":"${country_code}"}]' THEN 2
+        WHEN states @> '[{"country_code":"${country_code}"}]' THEN 1
+        ELSE 0
+      END) DESC
+    `);
+
+    // -------------------------------
+    // 5️⃣ Fetch promotions
+    // -------------------------------
     const { rows: promotions, count } = await Promotion.findAndCountAll({
-      where: {
-        ...where,
-        [Op.or]: [
-          city && { cities: { [Op.contains]: [{ name: city }] } },
-          state && { states: { [Op.contains]: [{ state_code: state }] } },
-          timezone && { timezones: { [Op.contains]: [timezone] } },
-        ].filter(Boolean),
-      },
+      where: whereCondition,
       include: [
         {
           model: Business,
           as: "business",
           attributes: ["name", "categories", "businessAddress"],
           where: businessCategoryFilter
-            ? literal(`
-              "business"."categories" ?| array[${businessCategoryFilter
-                .map((c) => `'${c}'`)
-                .join(",")}]
-            `)
+            ? literal(
+                `"business"."categories" ?| array[${businessCategoryFilter
+                  .map((c) => `'${c}'`)
+                  .join(",")}]`,
+              )
             : undefined,
         },
       ],
       order: [orderPriority, ["createdAt", "DESC"]],
-      limit: Number(limit),
-      offset: Number(offset),
+      limit,
+      offset,
       distinct: true,
     });
 
+    // -------------------------------
+    // 6️⃣ Return response
+    // -------------------------------
     res.json({
       success: true,
       total: count,
-      page: Number(page),
-      limit: Number(limit),
+      page,
+      limit,
       totalPages: Math.ceil(count / limit),
       promotions,
     });
