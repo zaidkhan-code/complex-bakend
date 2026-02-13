@@ -602,7 +602,7 @@ const updatePromotion = async (req, res) => {
       : text
         ? [text]
         : promotion.text;
-    promotion.backgroundColor = backgroundColor || promotion.backgroundColor;
+    promotion.backgroundColor = backgroundColor;
     promotion.cities = cities;
     promotion.states = states;
     promotion.timezones = timezones;
