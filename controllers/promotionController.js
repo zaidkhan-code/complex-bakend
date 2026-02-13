@@ -28,18 +28,23 @@ const getPromotions = async (req, res) => {
     const offset = (page - 1) * limit;
 
     // -------------------------------
-    // 2️⃣ Business category filter
+    // 2️⃣ Clean Category Filter (NULL SAFE)
     // -------------------------------
-    const businessCategoryFilter =
-      category && Array.isArray(category)
-        ? category
-        : category
-          ? category.split(",").map((c) => c.trim())
-          : null;
+    let categoryFilter = [];
 
-    // -------------------------------
-    // 3️⃣ Build location filters
-    // -------------------------------
+    if (category) {
+      if (Array.isArray(category)) {
+        categoryFilter = category
+          .map((c) => c?.toString().trim().toLowerCase())
+          .filter(Boolean);
+      } else if (typeof category === "string") {
+        categoryFilter = category
+          .split(",")
+          .map((c) => c.trim().toLowerCase())
+          .filter(Boolean);
+      }
+    }
+
     const locationFilters = [];
 
     if (country_code) {
@@ -56,33 +61,66 @@ const getPromotions = async (req, res) => {
     }
 
     if (city) {
-      locationFilters.push({ cities: { [Op.contains]: [{ name: city }] } });
+      locationFilters.push({
+        cities: { [Op.contains]: [{ name: city }] },
+      });
     }
 
     if (timezone) {
-      locationFilters.push({ timezones: { [Op.contains]: [timezone] } });
+      locationFilters.push({
+        timezones: { [Op.contains]: [timezone] },
+      });
     }
 
+    // -------------------------------
+    // 4️⃣ Category Condition (Promotion OR Business)
+    // -------------------------------
+    let categoryCondition = {};
+
+    if (categoryFilter.length) {
+      categoryCondition = {
+        [Op.or]: [
+          // Match Promotion categories (ARRAY column)
+          {
+            categories: {
+              [Op.overlap]: categoryFilter,
+            },
+          },
+
+          // Match Business categories (JSONB column)
+          literal(
+            `"business"."categories" ?| array[${categoryFilter
+              .map((c) => `'${c}'`)
+              .join(",")}]`,
+          ),
+        ],
+      };
+    }
+
+    // -------------------------------
+    // 5️⃣ Final WHERE condition
+    // -------------------------------
     const whereCondition = {
       status: "active",
       ...(locationFilters.length ? { [Op.or]: locationFilters } : {}),
+      ...categoryCondition,
     };
 
     // -------------------------------
-    // 4️⃣ Define order priority (closest match first)
+    // 6️⃣ Order Priority (UNCHANGED)
     // -------------------------------
     const orderPriority = literal(`
       (CASE
-        WHEN cities @> '[{"name":"${city}"}]' THEN 4
-        WHEN states @> '[{"state_code":"${state}"}]' THEN 3
-        WHEN cities @> '[{"country_code":"${country_code}"}]' THEN 2
-        WHEN states @> '[{"country_code":"${country_code}"}]' THEN 1
+        WHEN cities @> '[{"name":"${city || ""}"}]' THEN 4
+        WHEN states @> '[{"state_code":"${state || ""}"}]' THEN 3
+        WHEN cities @> '[{"country_code":"${country_code || ""}"}]' THEN 2
+        WHEN states @> '[{"country_code":"${country_code || ""}"}]' THEN 1
         ELSE 0
       END) DESC
     `);
 
     // -------------------------------
-    // 5️⃣ Fetch promotions
+    // 7️⃣ Fetch Promotions
     // -------------------------------
     const { rows: promotions, count } = await Promotion.findAndCountAll({
       where: whereCondition,
@@ -91,13 +129,7 @@ const getPromotions = async (req, res) => {
           model: Business,
           as: "business",
           attributes: ["name", "categories", "businessAddress"],
-          where: businessCategoryFilter
-            ? literal(
-                `"business"."categories" ?| array[${businessCategoryFilter
-                  .map((c) => `'${c}'`)
-                  .join(",")}]`,
-              )
-            : undefined,
+          required: false, // 🔥 VERY IMPORTANT (LEFT JOIN)
         },
       ],
       order: [orderPriority, ["createdAt", "DESC"]],
@@ -107,7 +139,7 @@ const getPromotions = async (req, res) => {
     });
 
     // -------------------------------
-    // 6️⃣ Return response
+    // 8️⃣ Response
     // -------------------------------
     res.json({
       success: true,
@@ -119,7 +151,10 @@ const getPromotions = async (req, res) => {
     });
   } catch (error) {
     console.error("Promotion Fetch Error:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 

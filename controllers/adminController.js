@@ -643,6 +643,7 @@ const createPromotionForBusiness = async (req, res) => {
       stopDate,
       runTime,
       metadata,
+      categories = [],
       stopTime,
     } = req.body;
 
@@ -658,7 +659,7 @@ const createPromotionForBusiness = async (req, res) => {
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      // categories: business.categories || [],
+      categories: categories || [],
       cities,
       states,
       metadata,

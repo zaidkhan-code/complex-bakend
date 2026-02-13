@@ -42,9 +42,7 @@ const Promotion = sequelize.define(
       type: DataTypes.ARRAY(DataTypes.STRING),
       allowNull: false,
       defaultValue: [],
-      comment: "Array of promotion categories (slug format)",
     },
-
     // Support multiple cities/states/timezones for a promotion (JSON arrays)
     cities: {
       type: DataTypes.JSONB,
