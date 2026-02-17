@@ -151,21 +151,21 @@ const getWishlist = async (req, res) => {
         {
           model: Promotion,
           as: "Promotion",
-          attributes: [
-            "id",
-            "businessId",
-            "imageUrl",
-            "text",
-            "backgroundColor",
-            "categories",
-          ],
-          include: [
-            {
-              model: Business,
-              as: "business",
-              attributes: ["id", "name", "businessAddress"],
-            },
-          ],
+          // attributes: [
+          //   "id",
+          //   "businessId",
+          //   "imageUrl",
+          //   "text",
+          //   "backgroundColor",
+          //   "categories",
+          // ],
+          // include: [
+          //   {
+          //     model: Business,
+          //     as: "business",
+          //     attributes: ["id", "name", "businessAddress"],
+          //   },
+          // ],
         },
       ],
       order: [["createdAt", "DESC"]],
