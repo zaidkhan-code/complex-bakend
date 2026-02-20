@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const { Op } = require("sequelize");
+const { sequelize } = require("../config/db");
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
 
@@ -18,54 +19,51 @@ const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
     });
 
     for (const promo of promotions) {
-      promo.status = "inactive"; // Approved but not active
+      promo.status = "inactive";
       promo.approvedAt = now;
       await promo.save();
-      console.log(`✅ Auto-approved promotion ${promo.id} (24h passed)`);
+      console.log(`Auto-approved promotion ${promo.id} (24h passed)`);
     }
   } catch (error) {
     console.error("Error in auto-approve cron:", error);
   }
 });
 
-const expirePromotions = cron.schedule("0 0 * * *", async () => {
+const runExpirePromotions = async () => {
   try {
-    const now = new Date();
+    const [result] = await sequelize.query(`
+      UPDATE "Promotions"
+      SET "status" = 'expired',
+          "updatedAt" = NOW()
+      WHERE "status" IN ('active', 'inactive', 'pending')
+        AND "stopDate" < CURRENT_DATE
+      RETURNING "id";
+    `);
 
-    // Today in YYYY-MM-DD (server timezone)
-    const today = now.toISOString().split("T")[0];
-
-    const promotions = await Promotion.findAll({
-      where: {
-        status: {
-          [Op.not]: "expired",
-        },
-        stopDate: {
-          [Op.lt]: today, // expired as soon as date rolls over
-        },
-      },
-    });
-
-    for (const promo of promotions) {
-      promo.status = "expired";
-      await promo.save();
-
-      console.log(`⏳ Promotion expired at 12:00 AM | ID: ${promo.id}`);
+    if (Array.isArray(result) && result.length) {
+      console.log(`Expired promotions: ${result.length}`);
     }
   } catch (error) {
-    console.error("❌ Error in expire promotions cron:", error);
+    console.error("Error in expire promotions cron:", error);
   }
-});
+};
+
+const expirePromotions = cron.schedule("*/10 * * * *", runExpirePromotions);
+
 const startCronJobs = () => {
   autoApprovePendingPromotions.start();
   expirePromotions.start();
-  console.log("✅ All cron jobs started");
+  // Run once at startup so already-ended promotions are expired immediately.
+  runExpirePromotions().catch((error) =>
+    console.error("Error running startup expire check:", error),
+  );
+  console.log("All cron jobs started");
 };
 
 const stopCronJobs = () => {
   autoApprovePendingPromotions.stop();
   expirePromotions.stop();
-  console.log("✅ All cron jobs stopped");
+  console.log("All cron jobs stopped");
 };
 
 module.exports = { startCronJobs, stopCronJobs };

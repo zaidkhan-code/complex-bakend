@@ -117,4 +117,5 @@ module.exports = {
   formatDate,
   getDateRange,
   isValidDateRange,
+  calculateMonthsFromDateRange,
 };

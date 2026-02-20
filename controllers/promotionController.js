@@ -1,22 +1,123 @@
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
+const PromotionLocation = require("../models/PromotionLocation");
 const Template = require("../models/Template");
-const { Op, literal } = require("sequelize");
+const { Op } = require("sequelize");
 const { calculatePrice } = require("../utils/calculatePrice");
+const {
+  getPromotionLocationAttributes,
+} = require("../utils/promotionLocationUtils");
 const {
   isValidDateRange,
   calculateMonthsFromDateRange,
 } = require("../utils/dateUtils");
+
+const extractLatLng = (coordinates) => {
+  const value = coordinates?.coordinates;
+  if (!Array.isArray(value) || value.length < 2) {
+    return { lat: null, lng: null };
+  }
+
+  const [lng, lat] = value;
+  return {
+    lat: Number.isFinite(Number(lat)) ? Number(lat) : null,
+    lng: Number.isFinite(Number(lng)) ? Number(lng) : null,
+  };
+};
+
+const buildLegacyLocationShape = (locations = []) => {
+  const cities = [];
+  const states = [];
+  const timezones = [];
+  const citySet = new Set();
+  const stateSet = new Set();
+  const timezoneSet = new Set();
+
+  for (const loc of locations) {
+    if (!loc) continue;
+
+    if (loc.type === "city" && loc.city_name) {
+      const cityKey = `${loc.city_name}|${loc.state_code || ""}|${loc.country_code || ""}`;
+      if (!citySet.has(cityKey)) {
+        citySet.add(cityKey);
+        const cityCoords = extractLatLng(loc.coordinates);
+        cities.push({
+          id: loc.id,
+          placeId: null,
+          name: loc.city_name,
+          state_code: loc.state_code || null,
+          state_name: loc.state_name || null,
+          country_code: loc.country_code || null,
+          country_name: null,
+          formattedAddress: null,
+          lat: cityCoords.lat,
+          lng: cityCoords.lng,
+        });
+      }
+    }
+
+    if (loc.type === "state" && loc.state_code) {
+      const stateKey = `${loc.state_code}|${loc.country_code || ""}`;
+      if (!stateSet.has(stateKey)) {
+        stateSet.add(stateKey);
+        const stateCoords = extractLatLng(loc.coordinates);
+        states.push({
+          id: loc.id,
+          placeId: null,
+          name: loc.state_name || loc.state_code,
+          state_code: loc.state_code,
+          state_name: loc.state_name || loc.state_code || null,
+          country_code: loc.country_code || null,
+          country_name: null,
+          formattedAddress: null,
+          lat: stateCoords.lat,
+          lng: stateCoords.lng,
+        });
+      }
+    }
+
+    if (loc.type === "timezone" && loc.timezone) {
+      if (!timezoneSet.has(loc.timezone)) {
+        timezoneSet.add(loc.timezone);
+        timezones.push(loc.timezone);
+      }
+    }
+  }
+
+  return { cities, states, timezones };
+};
+
+const normalizePromotionForFrontend = (promotion) => {
+  const plain = promotion?.toJSON ? promotion.toJSON() : promotion;
+  if (!plain) return plain;
+
+  const legacy = buildLegacyLocationShape(plain.locations || []);
+  return {
+    ...plain,
+    cities:
+      Array.isArray(plain.cities) && plain.cities.length
+        ? plain.cities
+        : legacy.cities,
+    states:
+      Array.isArray(plain.states) && plain.states.length
+        ? plain.states
+        : legacy.states,
+    timezones:
+      Array.isArray(plain.timezones) && plain.timezones.length
+        ? plain.timezones
+        : legacy.timezones,
+  };
+};
 
 // @desc    Get all promotions with filters
 // @route   GET /api/promotions
 // @access  Public
 const getPromotions = async (req, res) => {
   try {
-    // -------------------------------
-    // 1️⃣ Extract and normalize query params
-    // -------------------------------
+    const locationAttributes = await getPromotionLocationAttributes();
+
     const normalize = (v) => v?.toString().trim().toLowerCase();
+    const normalizeUpper = (v) => v?.toString().trim().toUpperCase();
 
     const country_code = req.query.country_code;
     const state = req.query.state;
@@ -27,11 +128,17 @@ const getPromotions = async (req, res) => {
     const limit = Number(req.query.limit || 20);
     const offset = (page - 1) * limit;
 
-    // -------------------------------
-    // 2️⃣ Clean Category Filter (NULL SAFE)
-    // -------------------------------
-    let categoryFilter = [];
+    const normalizedCountryCode = normalizeUpper(country_code);
+    const normalizedStateCode = normalizeUpper(state);
+    const normalizedCity = city?.toString().trim();
+    const hasLocationQuery = Boolean(
+      normalizedCountryCode ||
+      normalizedStateCode ||
+      normalizedCity ||
+      timezone,
+    );
 
+    let categoryFilter = [];
     if (category) {
       if (Array.isArray(category)) {
         categoryFilter = category
@@ -45,83 +152,75 @@ const getPromotions = async (req, res) => {
       }
     }
 
-    const locationFilters = [];
-
-    if (country_code) {
-      locationFilters.push(
-        { cities: { [Op.contains]: [{ country_code }] } },
-        { states: { [Op.contains]: [{ country_code }] } },
-      );
-    }
-
-    if (state) {
-      locationFilters.push({
-        states: { [Op.contains]: [{ state_code: state }] },
-      });
-    }
-
-    if (city) {
-      locationFilters.push({
-        cities: { [Op.contains]: [{ name: city }] },
-      });
-    }
-
-    if (timezone) {
-      locationFilters.push({
-        timezones: { [Op.contains]: [timezone] },
-      });
-    }
-
-    // -------------------------------
-    // 4️⃣ Category Condition (Promotion OR Business)
-    // -------------------------------
     let categoryCondition = {};
-
     if (categoryFilter.length) {
+      const matchingBusinesses = await Business.findAll({
+        attributes: ["id"],
+        where: {
+          [Op.or]: categoryFilter.map((cat) => ({
+            categories: {
+              [Op.contains]: [cat],
+            },
+          })),
+        },
+        raw: true,
+      });
+
+      const businessIds = matchingBusinesses.map((b) => b.id).filter(Boolean);
+
       categoryCondition = {
         [Op.or]: [
-          // Match Promotion categories (ARRAY column)
           {
             categories: {
               [Op.overlap]: categoryFilter,
             },
           },
-
-          // Match Business categories (JSONB column)
-          literal(
-            `"business"."categories" ?| array[${categoryFilter
-              .map((c) => `'${c}'`)
-              .join(",")}]`,
-          ),
+          ...(businessIds.length
+            ? [
+                {
+                  businessId: {
+                    [Op.in]: businessIds,
+                  },
+                },
+              ]
+            : []),
         ],
       };
     }
 
-    // -------------------------------
-    // 5️⃣ Final WHERE condition
-    // -------------------------------
     const whereCondition = {
       status: "active",
-      ...(locationFilters.length ? { [Op.or]: locationFilters } : {}),
       ...categoryCondition,
     };
 
-    // -------------------------------
-    // 6️⃣ Order Priority (UNCHANGED)
-    // -------------------------------
-    const orderPriority = literal(`
-      (CASE
-        WHEN cities @> '[{"name":"${city || ""}"}]' THEN 4
-        WHEN states @> '[{"state_code":"${state || ""}"}]' THEN 3
-        WHEN cities @> '[{"country_code":"${country_code || ""}"}]' THEN 2
-        WHEN states @> '[{"country_code":"${country_code || ""}"}]' THEN 1
-        ELSE 0
-      END) DESC
-    `);
+    const locationWhere = [];
+    if (normalizedCountryCode) {
+      locationWhere.push({ country_code: normalizedCountryCode });
+    }
+    if (normalizedStateCode) {
+      locationWhere.push({ state_code: normalizedStateCode });
+    }
+    if (normalizedCity) {
+      locationWhere.push({ city_name: { [Op.iLike]: normalizedCity } });
+    }
+    if (timezone) {
+      locationWhere.push({ timezone: { [Op.iLike]: timezone } });
+    }
 
-    // -------------------------------
-    // 7️⃣ Fetch Promotions
-    // -------------------------------
+    const locationsInclude = {
+      model: PromotionLocation,
+      as: "locations",
+      attributes: locationAttributes,
+      required: hasLocationQuery,
+      ...(hasLocationQuery
+        ? {
+            where: {
+              [Op.or]: locationWhere,
+            },
+          }
+        : {}),
+    };
+
     const { rows: promotions, count } = await Promotion.findAndCountAll({
       where: whereCondition,
       include: [
@@ -129,25 +228,22 @@ const getPromotions = async (req, res) => {
           model: Business,
           as: "business",
           attributes: ["name", "categories", "businessAddress"],
-          required: false, // 🔥 VERY IMPORTANT (LEFT JOIN)
+          required: false,
         },
+        locationsInclude,
       ],
-      order: [orderPriority, ["createdAt", "DESC"]],
+      order: [["createdAt", "DESC"]],
       limit,
       offset,
       distinct: true,
     });
-
-    // -------------------------------
-    // 8️⃣ Response
-    // -------------------------------
     res.json({
       success: true,
       total: count,
       page,
       limit,
       totalPages: Math.ceil(count / limit),
-      promotions,
+      promotions: promotions,
     });
   } catch (error) {
     console.error("Promotion Fetch Error:", error);
@@ -158,19 +254,25 @@ const getPromotions = async (req, res) => {
   }
 };
 
-module.exports = getPromotions;
-
 // @desc    Get single promotion
 // @route   GET /api/promotions/:id
 // @access  Public
 const getPromotionById = async (req, res) => {
   try {
+    const locationAttributes = await getPromotionLocationAttributes();
+
     const promotion = await Promotion.findByPk(req.params.id, {
       include: [
         {
           model: Business,
           as: "business",
           attributes: ["name", "category", "phone"],
+        },
+        {
+          model: PromotionLocation,
+          as: "locations",
+          attributes: locationAttributes,
+          required: false,
         },
       ],
     });
@@ -183,7 +285,7 @@ const getPromotionById = async (req, res) => {
     promotion.views += 1;
     await promotion.save();
 
-    res.json(promotion);
+    res.json(normalizePromotionForFrontend(promotion));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

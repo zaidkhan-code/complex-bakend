@@ -1,21 +1,264 @@
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
+const PromotionLocation = require("../models/PromotionLocation");
 const stripe = require("../config/stripe");
 const { Op } = require("sequelize");
-const { calculatePrice } = require("../utils/calculatePrice");
 const {
-  getDateRange,
-  calculateMonthsFromDateRange,
-} = require("../utils/dateUtils");
+  syncPromotionLocations,
+  getPromotionLocationAttributes,
+} = require("../utils/promotionLocationUtils");
+
+const extractLatLng = (coordinates) => {
+  const value = coordinates?.coordinates;
+  if (!Array.isArray(value) || value.length < 2) {
+    return { lat: null, lng: null };
+  }
+
+  const [lng, lat] = value;
+  return {
+    lat: Number.isFinite(Number(lat)) ? Number(lat) : null,
+    lng: Number.isFinite(Number(lng)) ? Number(lng) : null,
+  };
+};
+
+const buildLegacyLocationShape = (locations = []) => {
+  const cities = [];
+  const states = [];
+  const timezones = [];
+  const citySet = new Set();
+  const stateSet = new Set();
+  const timezoneSet = new Set();
+
+  for (const loc of locations) {
+    if (!loc) continue;
+
+    if (loc.type === "city" && loc.city_name) {
+      const cityKey = `${loc.city_name}|${loc.state_code || ""}|${loc.country_code || ""}`;
+      if (!citySet.has(cityKey)) {
+        citySet.add(cityKey);
+        const cityCoords = extractLatLng(loc.coordinates);
+        cities.push({
+          id: loc.id,
+          placeId: null,
+          name: loc.city_name,
+          state_code: loc.state_code || null,
+          state_name: loc.state_name || null,
+          country_code: loc.country_code || null,
+          country_name: null,
+          formattedAddress: null,
+          lat: cityCoords.lat,
+          lng: cityCoords.lng,
+        });
+      }
+    }
+
+    if (loc.type === "state" && loc.state_code) {
+      const stateKey = `${loc.state_code}|${loc.country_code || ""}`;
+      if (!stateSet.has(stateKey)) {
+        stateSet.add(stateKey);
+        const stateCoords = extractLatLng(loc.coordinates);
+        states.push({
+          id: loc.id,
+          placeId: null,
+          name: loc.state_name || loc.state_code,
+          state_code: loc.state_code,
+          state_name: loc.state_name || loc.state_code || null,
+          country_code: loc.country_code || null,
+          country_name: null,
+          formattedAddress: null,
+          lat: stateCoords.lat,
+          lng: stateCoords.lng,
+        });
+      }
+    }
+
+    if (loc.type === "timezone" && loc.timezone) {
+      if (!timezoneSet.has(loc.timezone)) {
+        timezoneSet.add(loc.timezone);
+        timezones.push(loc.timezone);
+      }
+    }
+  }
+
+  return { cities, states, timezones };
+};
+
+const normalizePromotionForFrontend = (promotion) => {
+  const plain = promotion?.toJSON ? promotion.toJSON() : promotion;
+  if (!plain) return plain;
+
+  const legacy = buildLegacyLocationShape(plain.locations || []);
+
+  return {
+    ...plain,
+    cities:
+      Array.isArray(plain.cities) && plain.cities.length
+        ? plain.cities
+        : legacy.cities,
+    states:
+      Array.isArray(plain.states) && plain.states.length
+        ? plain.states
+        : legacy.states,
+    timezones:
+      Array.isArray(plain.timezones) && plain.timezones.length
+        ? plain.timezones
+        : legacy.timezones,
+  };
+};
+
+const getBusinessPromotionWithRelations = async (promotionId, businessId) => {
+  const locationAttributes = await getPromotionLocationAttributes();
+
+  return Promotion.findOne({
+    where: { id: promotionId, businessId },
+    include: [
+      {
+        model: Business,
+        as: "business",
+        attributes: [
+          "id",
+          "name",
+          "email",
+          "businessType",
+          "autoApprovePromotions",
+          "status",
+        ],
+        required: false,
+      },
+      {
+        model: PromotionLocation,
+        as: "locations",
+        attributes: locationAttributes,
+        required: false,
+      },
+    ],
+  });
+};
+
+const normalizeArray = (value) => (Array.isArray(value) ? value : []);
+
+const normalizeTimezoneText = (value) => {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    return value.timezone || value.value || value.name || "";
+  }
+  return "";
+};
+
+const normalizeStateCode = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase();
+
+const normalizeStateName = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const getStateIdentity = (state) => ({
+  code: normalizeStateCode(state?.state_code || state?.code),
+  name: normalizeStateName(state?.state_name || state?.name || state?.state),
+});
+
+const validateBusinessStateEdit = ({
+  existingStates = [],
+  nextStates = [],
+}) => {
+  const safeExisting = Array.isArray(existingStates) ? existingStates : [];
+  const safeNext = Array.isArray(nextStates) ? nextStates : [];
+
+  const allowedCodes = new Set();
+  const allowedNames = new Set();
+  const allowedLabels = [];
+
+  safeExisting.forEach((state) => {
+    const identity = getStateIdentity(state);
+    if (identity.code) allowedCodes.add(identity.code);
+    if (identity.name) allowedNames.add(identity.name);
+
+    const displayName =
+      String(state?.state_name || state?.name || "").trim() || null;
+    const displayCode =
+      String(state?.state_code || state?.code || "")
+        .trim()
+        .toUpperCase() || null;
+    if (displayName && displayCode) {
+      allowedLabels.push(`${displayName} (${displayCode})`);
+    } else if (displayName) {
+      allowedLabels.push(displayName);
+    } else if (displayCode) {
+      allowedLabels.push(displayCode);
+    }
+  });
+
+  const hasAnyExistingStates = allowedCodes.size > 0 || allowedNames.size > 0;
+  if (!hasAnyExistingStates) {
+    if (safeNext.length > 0) {
+      return {
+        ok: false,
+        message:
+          "This promotion has no existing states. Adding new states in edit is not allowed.",
+      };
+    }
+    return { ok: true };
+  }
+
+  for (const state of safeNext) {
+    const identity = getStateIdentity(state);
+    const hasIdentity = Boolean(identity.code || identity.name);
+    if (!hasIdentity) {
+      return {
+        ok: false,
+        message:
+          "Invalid state payload. Each state must include state_code or state_name.",
+      };
+    }
+
+    const codeAllowed = identity.code && allowedCodes.has(identity.code);
+    const nameAllowed = identity.name && allowedNames.has(identity.name);
+    if (!codeAllowed && !nameAllowed) {
+      const allowedList = allowedLabels.length
+        ? allowedLabels.join(", ")
+        : "existing promotion states";
+      return {
+        ok: false,
+        message: `Only existing states can be used in edit mode. Allowed: ${allowedList}.`,
+      };
+    }
+  }
+
+  return { ok: true };
+};
+
+const calculateDurationMonths = (runDate, stopDate) => {
+  const start = new Date(runDate);
+  const end = new Date(stopDate);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    start > end
+  ) {
+    return 1;
+  }
+
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +
+    1
+  );
+};
+
+// @desc    Create new promotion
+// @route   POST /api/business/promotions
+// @access  Private (Business)
 const createPromotion = async (req, res) => {
   try {
     const business = await Business.findByPk(req.business.id);
-    console.log(business, "business")
     if (!business) {
       return res.status(404).json({ message: "Business not found" });
     }
 
-    // 👇 ACTIVE SUBSCRIPTION (from middleware)
     const subscription = req.activeSubscription;
     if (!subscription) {
       return res.status(403).json({
@@ -28,7 +271,6 @@ const createPromotion = async (req, res) => {
       imageUrl,
       text,
       backgroundColor,
-      category,
       cities = [],
       states = [],
       timezones = [],
@@ -36,50 +278,43 @@ const createPromotion = async (req, res) => {
       stopDate,
       runTime,
       stopTime,
+      metadata = {},
+      categories = [],
     } = req.body;
 
-    /* ==========================================
-       SUBSCRIPTION DATE VALIDATION
-    ========================================== */
-    const subStart = new Date(subscription.startDate);
-    const subEnd = new Date(subscription.endDate);
-    const run = new Date(runDate);
-    const stop = new Date(stopDate);
+    if (!imageUrl || !runDate || !stopDate || !runTime || !stopTime) {
+      return res.status(400).json({
+        message:
+          "Missing required fields: imageUrl, runDate, stopDate, runTime, stopTime",
+      });
+    }
 
-    // if (run < subStart || stop > subEnd) {
-    //   return res.status(400).json({
-    //     message: `Promotion must run within subscription period (${
-    //       subStart.toISOString().split("T")[0]
-    //     } → ${subEnd.toISOString().split("T")[0]})`,
-    //   });
-    // }
-    const freeStates = subscription.freeStates || 0;
-    const freeTimezones = subscription.freeTimezones || 0;
+    const safeStates = normalizeArray(states);
+    const safeCities = normalizeArray(cities);
+    const safeTimezones = normalizeArray(timezones);
 
-    const extraStates = Math.max(0, states.length - freeStates);
-    const extraTimezones = Math.max(0, timezones.length - freeTimezones);
+    const freeStates = Number(subscription.freeStates || 0);
+    const freeTimezones = Number(subscription.freeTimezones || 0);
 
-    /* ==========================================
-       PRICING LOGIC
-    ========================================== */
+    const extraStates = Math.max(0, safeStates.length - freeStates);
+    const extraTimezones = Math.max(0, safeTimezones.length - freeTimezones);
+
     const isOnlineStore = business.businessType === "online-ecommerce";
-    const hasEasternTimezone = timezones.some((tz) =>
-      tz.toLowerCase().includes("eastern"),
+    const hasEasternTimezone = safeTimezones.some((tz) =>
+      normalizeTimezoneText(tz).toLowerCase().includes("eastern"),
     );
 
     let stateCost = 0;
     let timezoneCost = 0;
 
-    // STATES
     if (extraStates > 0) {
       stateCost = isOnlineStore ? extraStates * 10 : extraStates * 20;
     }
 
-    // TIMEZONES
     if (extraTimezones > 0) {
       if (hasEasternTimezone) {
-        const nonEasternCount = timezones.filter(
-          (tz) => !tz.toLowerCase().includes("eastern"),
+        const nonEasternCount = safeTimezones.filter(
+          (tz) => !normalizeTimezoneText(tz).toLowerCase().includes("eastern"),
         ).length;
 
         timezoneCost = isOnlineStore
@@ -92,27 +327,26 @@ const createPromotion = async (req, res) => {
       }
     }
 
-    // Cities are free (subscription-based, no cost)
     const totalPrice = stateCost + timezoneCost;
 
-    /* ==========================================
-       CREATE PROMOTION (PENDING IF PAID)
-    ========================================== */
     const promotion = await Promotion.create({
       businessId: business.id,
-      templateId,
+      templateId: templateId || null,
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      categories: business.categories,
-      cities,
-      states,
-      timezones,
+      categories:
+        Array.isArray(categories) && categories.length
+          ? categories
+          : normalizeArray(business.categories),
+      cities: safeCities,
+      states: safeStates,
+      timezones: safeTimezones,
       runDate,
       stopDate,
       runTime,
       stopTime,
-      calculatedMonths: 1,
+      calculatedMonths: calculateDurationMonths(runDate, stopDate),
       price: totalPrice,
       status:
         totalPrice > 0
@@ -120,13 +354,34 @@ const createPromotion = async (req, res) => {
           : business.autoApprovePromotions
             ? "inactive"
             : "pending",
-      autoApprove: business.autoApprovePromotions || false,
+      autoApprove: Boolean(business.autoApprovePromotions),
       paymentStatus: totalPrice > 0 ? "pending" : "completed",
+      metadata: metadata && typeof metadata === "object" ? metadata : {},
     });
 
-    /* ==========================================
-       STRIPE PAYMENT (ONLY IF PRICE > 0)
-    ========================================== */
+    try {
+      await syncPromotionLocations({
+        promotionId: promotion.id,
+        cities: safeCities,
+        states: safeStates,
+        timezones: safeTimezones,
+      });
+    } catch (locationError) {
+      console.warn(
+        "PromotionLocations sync warning (business create):",
+        locationError.message,
+      );
+    }
+
+    const createdPromotion = await getBusinessPromotionWithRelations(
+      promotion.id,
+      business.id,
+    );
+
+    const normalizedPromotion = normalizePromotionForFrontend(
+      createdPromotion || promotion,
+    );
+
     if (totalPrice > 0) {
       if (!business.stripeCustomerId) {
         const customer = await stripe.customers.create({
@@ -147,22 +402,38 @@ const createPromotion = async (req, res) => {
           promotionId: promotion.id,
           businessId: business.id,
         },
-        // automatic_payment_methods: { enabled: true },
         description: `Promotion add-ons: ${extraStates} extra states, ${extraTimezones} extra timezones`,
       });
 
       return res.status(201).json({
-        promotion,
+        message: "Promotion created. Payment is required to proceed.",
+        promotion: normalizedPromotion,
+        pricing: {
+          freeStates,
+          freeTimezones,
+          extraStates,
+          extraTimezones,
+          stateCost,
+          timezoneCost,
+          total: totalPrice,
+        },
         clientSecret: paymentIntent.client_secret,
         requiresPayment: true,
       });
     }
 
-    /* ==========================================
-       FREE PROMOTION
-    ========================================== */
     return res.status(201).json({
-      promotion,
+      message: "Promotion created successfully",
+      promotion: normalizedPromotion,
+      pricing: {
+        freeStates,
+        freeTimezones,
+        extraStates,
+        extraTimezones,
+        stateCost,
+        timezoneCost,
+        total: totalPrice,
+      },
       clientSecret: null,
       requiresPayment: false,
     });
@@ -172,200 +443,102 @@ const createPromotion = async (req, res) => {
   }
 };
 
-// @desc    Create new promotion
-// @route   POST /api/business/promotions
-// @access  Private (Business)
-// const createPromotion = async (req, res) => {
-//   try {
-//     const {
-//       templateId,
-//       imageUrl,
-//       text,
-//       backgroundColor,
-//       category,
-//       cities = [],
-//       states = [],
-//       timezones = [],
-//       runDate,
-//       stopDate,
-//       runTime,
-//       stopTime,
-//       price, // Price calculated on frontend
-//     } = req.body;
-
-//     const promotion = await Promotion.create({
-//       businessId: req.business.id,
-//       templateId,
-//       imageUrl,
-//       text: text ? (Array.isArray(text) ? text : [text]) : [],
-//       backgroundColor: backgroundColor || "",
-//       category: category || req.business.category,
-//       cities,
-//       states,
-//       timezones,
-//       runDate,
-//       stopDate,
-//       runTime,
-//       stopTime,
-//       price,
-//       status: "pending", // Will be activated after payment
-//     });
-
-//     console.log(
-//       `✅ [CREATE PROMOTION] Promotion created - ID: ${promotion.id}, Price: ${promotion.price}`,
-//     );
-
-//     console.log(
-//       `   Preparing Stripe checkout session...`,
-//       cities,
-//       states,
-//       timezones,
-//     );
-//     const formatList = (items, formatter, emptyLabel) => {
-//       if (!items || items.length === 0) return emptyLabel;
-//       return items.map(formatter).join(", ");
-//     };
-
-//     const formatDate = (date) => new Date(date).toLocaleDateString("en-US");
-
-//     const formatTime = (time) => time || "N/A";
-//     // Format promotion details for Stripe description
-//     const statesList = formatList(
-//       states,
-//       (s) => `${s.name || s.code} (${s.state_code})`,
-//       "No states selected",
-//     );
-
-//     const citiesList = formatList(cities, (c) => c.name, "No cities selected");
-
-//     const timezonesList = formatList(
-//       timezones,
-//       (tz) => tz,
-//       "No timezones selected",
-//     );
-
-//     const promotionDescription = `
-// Promotion Details
-// States: ${statesList}
-// Cities: ${citiesList}
-// Timezones: ${timezonesList}
-// Date: ${formatDate(promotion.runDate)} → ${formatDate(promotion.stopDate)}
-// Time: ${formatTime(promotion.runTime)} → ${formatTime(promotion.stopTime)}
-// Price: $${promotion.price}
-// `.trim();
-
-//     // Create Stripe checkout session
-//     const session = await stripe.checkout.sessions.create({
-//       payment_method_types: ["card"],
-//       line_items: [
-//         {
-//           price_data: {
-//             currency: "usd",
-//             product_data: {
-//               name: "Promotion Service",
-//               description: promotionDescription,
-//             },
-//             unit_amount: Math.round(promotion.price * 100), // Convert to cents
-//           },
-//           quantity: 1,
-//         },
-//       ],
-//       mode: "payment",
-//       success_url: `${
-//         process.env.FRONTEND_URL || "http://localhost:3000"
-//       }/business/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-//       cancel_url: `${
-//         process.env.FRONTEND_URL || "http://localhost:3000"
-//       }/business/promotions?payment_canceled=true&promotion_id=${promotion.id}`,
-//       metadata: {
-//         promotionId: promotion.id,
-//         businessId: req.business.id,
-//         category: promotion.category,
-//         runDate: promotion.runDate,
-//         stopDate: promotion.stopDate,
-//         runTime: promotion.runTime,
-//         stopTime: promotion.stopTime,
-//       },
-//     });
-
-//     console.log(
-//       `✅ [CREATE PROMOTION] Stripe session created - Session ID: ${session.id}`,
-//     );
-
-//     // Return promotion data with Stripe session info
-//     res.status(201).json({
-//       promotion,
-//       stripeSession: {
-//         sessionId: session.id,
-//         url: session.url,
-//       },
-//     });
-//   } catch (error) {
-//     console.error(`❌ [CREATE PROMOTION] Error:`, error.message);
-//     res.status(500).json({ message: error.message });
-//   }
-// };
-// controllers/promotionController.js
-
 // @desc    Get all business promotions
 // @route   GET /api/business/promotions
 // @access  Private (Business)
 const getBusinessPromotions = async (req, res) => {
   try {
-    const { search = "", status = "" } = req.query;
+    const { search = "", status = "", page = 1, limit = 50 } = req.query;
 
-    // Build where clause with search filter
+    const parsedPage =
+      Number.isFinite(Number(page)) && Number(page) > 0 ? Number(page) : 1;
+    const parsedLimit =
+      Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : 50;
+    const offset = (parsedPage - 1) * parsedLimit;
+
     const whereClause = {
       businessId: req.business.id,
     };
 
-    // If status query is provided, filter by status
-    if (status.trim()) {
-      const validStatuses = ["active", "inactive", "pending"];
-      if (validStatuses.includes(status.toLowerCase())) {
-        whereClause.status = status.toLowerCase();
-      }
+    const normalizedStatus = String(status || "")
+      .trim()
+      .toLowerCase();
+    const validStatuses = ["active", "inactive", "pending", "expired"];
+    if (normalizedStatus && validStatuses.includes(normalizedStatus)) {
+      whereClause.status = normalizedStatus;
     }
 
-    // If search query is provided, filter by category
-    if (search.trim()) {
-      whereClause[Op.or] = [
-        {
-          category: {
-            [Op.iLike]: `%${search}%`,
-          },
-        },
-      ];
+    const normalizedSearch = String(search || "")
+      .trim()
+      .toLowerCase();
+    if (normalizedSearch) {
+      whereClause.categories = { [Op.overlap]: [normalizedSearch] };
     }
 
-    const promotions = await Promotion.findAll({
+    const locationAttributes = await getPromotionLocationAttributes();
+
+    const { count, rows } = await Promotion.findAndCountAll({
       where: whereClause,
+      include: [
+        {
+          model: Business,
+          as: "business",
+          attributes: [
+            "id",
+            "name",
+            "email",
+            "businessType",
+            "autoApprovePromotions",
+            "status",
+          ],
+          required: false,
+        },
+        {
+          model: PromotionLocation,
+          as: "locations",
+          attributes: locationAttributes,
+          required: false,
+        },
+      ],
       order: [["createdAt", "DESC"]],
+      limit: parsedLimit,
+      offset,
+      distinct: true,
     });
 
-    res.json(promotions);
+    const promotions = rows;
+
+    res.json({
+      promotions,
+      pagination: {
+        total: count,
+        pages: Math.ceil(count / parsedLimit),
+        currentPage: parsedPage,
+        limit: parsedLimit,
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+// @desc    Get one business promotion
+// @route   GET /api/business/promotions/:promotionId
+// @access  Private (Business)
 const getPromotionById = async (req, res) => {
   try {
-    const { promotionId } = req.params; // get promotion ID from URL
+    const { promotionId } = req.params;
 
-    // Find promotion belonging to the logged-in business
-    const promotion = await Promotion.findOne({
-      where: {
-        id: promotionId,
-        businessId: req.business.id, // ensure it belongs to the business
-      },
-    });
+    const promotion = await getBusinessPromotionWithRelations(
+      promotionId,
+      req.business.id,
+    );
 
     if (!promotion) {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    res.json(promotion); // return promotion data
+    res.json({ promotion: normalizePromotionForFrontend(promotion) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -387,42 +560,76 @@ const updatePromotion = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    const { imageUrl, text, backgroundColor, runTime, stopTime  ,states,cities} = req.body;
+    const {
+      templateId,
+      imageUrl,
+      text,
+      backgroundColor,
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      states,
+      cities,
+      timezones,
+      categories,
+      metadata,
+    } = req.body;
 
-    // Allow editing: image, text (content & styling), background color, runTime, stopTime
-    // Location, state, runDate, stopDate cannot be changed
-    if (imageUrl) {
-      promotion.imageUrl = imageUrl;
+    if (templateId !== undefined) promotion.templateId = templateId;
+    if (imageUrl !== undefined) promotion.imageUrl = imageUrl;
+    if (text !== undefined) {
+      promotion.text = Array.isArray(text) ? text : text ? [text] : [];
     }
-
-    if (text) {
-      promotion.text = Array.isArray(text) ? text : [text];
-    }
-
-    if (backgroundColor !== undefined) {
+    if (backgroundColor !== undefined)
       promotion.backgroundColor = backgroundColor;
-    }
+    if (runDate !== undefined) promotion.runDate = runDate;
+    if (stopDate !== undefined) promotion.stopDate = stopDate;
+    if (runTime !== undefined) promotion.runTime = runTime;
+    if (stopTime !== undefined) promotion.stopTime = stopTime;
+    if (Array.isArray(states)) promotion.states = states;
+    if (Array.isArray(cities)) promotion.cities = cities;
+    if (Array.isArray(timezones)) promotion.timezones = timezones;
+    if (Array.isArray(categories)) promotion.categories = categories;
+    if (metadata && typeof metadata === "object") promotion.metadata = metadata;
 
-    if (runTime) {
-      promotion.runTime = runTime;
-    }
-    if (states) {
-      promotion.states = states;
-    }
-
-    if (
-cities) {
-      promotion.cities= cities;
-    }
-    if (stopTime) {
-      promotion.stopTime = stopTime;
+    if (promotion.runDate && promotion.stopDate) {
+      promotion.calculatedMonths = calculateDurationMonths(
+        promotion.runDate,
+        promotion.stopDate,
+      );
     }
 
     await promotion.save();
 
+    if (
+      Array.isArray(states) ||
+      Array.isArray(cities) ||
+      Array.isArray(timezones)
+    ) {
+      try {
+        await syncPromotionLocations({
+          promotionId: promotion.id,
+          cities: promotion.cities || [],
+          states: promotion.states || [],
+          timezones: promotion.timezones || [],
+        });
+      } catch (locationError) {
+        console.warn(
+          "PromotionLocations sync warning (business update):",
+          locationError.message,
+        );
+      }
+    }
+
+    const updatedPromotion = await getBusinessPromotionWithRelations(
+      promotion.id,
+      req.business.id,
+    );
+
     res.json({
       message: "Promotion updated successfully",
-      promotion,
+      promotion: normalizePromotionForFrontend(updatedPromotion || promotion),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -453,24 +660,22 @@ const deletePromotion = async (req, res) => {
   }
 };
 
+const clamp = (value, max) => Math.min(value, max);
+
 // @desc    Get business dashboard statistics
 // @route   GET /api/business/dashboard
 // @access  Private (Business)
-const clamp = (value, max) => Math.min(value, max);
-
 const getDashboard = async (req, res) => {
   try {
     const businessId = req.business.id;
     const now = new Date();
 
-    // Date ranges
     const last7Days = new Date();
     last7Days.setDate(now.getDate() - 7);
 
     const last30Days = new Date();
     last30Days.setDate(now.getDate() - 30);
 
-    // Counts
     const weeklyCount = await Promotion.count({
       where: { businessId, createdAt: { [Op.gte]: last7Days } },
     });
@@ -484,7 +689,7 @@ const getDashboard = async (req, res) => {
       where: { businessId, status: "active" },
     });
 
-    let momentumScore = clamp(Math.floor((totalPromotions / 25) * 100), 100); // simple scaling
+    let momentumScore = clamp(Math.floor((totalPromotions / 25) * 100), 100);
     let momentumLevel = "Low";
     if (momentumScore >= 70) momentumLevel = "High";
     else if (momentumScore >= 40) momentumLevel = "Medium";
@@ -500,7 +705,7 @@ const getDashboard = async (req, res) => {
             level: momentumLevel,
             message:
               momentumLevel === "High"
-                ? "Excellent promotion consistency 🚀"
+                ? "Excellent promotion consistency"
                 : momentumLevel === "Medium"
                   ? "Keep up the momentum!"
                   : "Run promotions more frequently to improve momentum",
@@ -512,6 +717,10 @@ const getDashboard = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Activate promotion
+// @route   POST /api/business/promotions/:promotionId/activate
+// @access  Private (Business)
 const activatePromotion = async (req, res) => {
   try {
     const { promotionId } = req.params;
@@ -531,19 +740,25 @@ const activatePromotion = async (req, res) => {
       });
     }
 
-    // Deactivate any other active promotions
     await Promotion.update(
       { status: "inactive" },
       { where: { businessId: req.business.id, status: "active" } },
     );
 
-    // Activate this promotion
     promotion.status = "active";
+    if (!promotion.approvedAt) {
+      promotion.approvedAt = new Date();
+    }
     await promotion.save();
+
+    const updated = await getBusinessPromotionWithRelations(
+      promotion.id,
+      req.business.id,
+    );
 
     res.json({
       message: "Promotion activated successfully",
-      promotion,
+      promotion: normalizePromotionForFrontend(updated || promotion),
     });
   } catch (error) {
     console.error("Error activating promotion:", error);
@@ -551,14 +766,13 @@ const activatePromotion = async (req, res) => {
   }
 };
 
-// ======================
-// BUSINESS: Deactivate Promotion
-// ======================
+// @desc    Deactivate promotion
+// @route   POST /api/business/promotions/:promotionId/deactivate
+// @access  Private (Business)
 const deactivatePromotion = async (req, res) => {
   try {
     const { promotionId } = req.params;
 
-    // Find promotion for this business
     const promotion = await Promotion.findOne({
       where: { id: promotionId, businessId: req.business.id },
     });
@@ -566,6 +780,7 @@ const deactivatePromotion = async (req, res) => {
     if (!promotion) {
       return res.status(404).json({ message: "Promotion not found" });
     }
+
     if (promotion.status === "pending") {
       return res.status(400).json({
         message: "Pending promotion cannot be deactivated. Approve it first.",
@@ -578,21 +793,17 @@ const deactivatePromotion = async (req, res) => {
       });
     }
 
-    // Deactivate promotion
     promotion.status = "inactive";
     await promotion.save();
 
-    res.json({
+    const updated = await getBusinessPromotionWithRelations(
+      promotion.id,
+      req.business.id,
+    );
+
+    return res.json({
       message: "Promotion successfully deactivated",
-      promotion: {
-        id: promotion.id,
-        businessId: promotion.businessId,
-        status: promotion.status,
-        runDate: promotion.runDate,
-        stopDate: promotion.stopDate,
-        approvedAt: promotion.approvedAt,
-        createdAt: promotion.createdAt,
-      },
+      promotion: normalizePromotionForFrontend(updated || promotion),
     });
   } catch (error) {
     console.error("Error deactivating promotion:", error);

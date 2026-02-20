@@ -73,6 +73,24 @@ const Business = sequelize.define(
   },
   {
     timestamps: true,
+    indexes: [
+      {
+        name: "idx_businesses_status_created",
+        fields: ["status", "createdAt"],
+      },
+      {
+        name: "idx_businesses_auto_approve",
+        fields: ["autoApprovePromotions"],
+      },
+      {
+        name: "idx_businesses_subscription_status",
+        fields: ["subscriptionStatus"],
+      },
+      {
+        name: "idx_businesses_business_type",
+        fields: ["businessType"],
+      },
+    ],
     hooks: {
       beforeCreate: async (business) => {
         if (business.password) {

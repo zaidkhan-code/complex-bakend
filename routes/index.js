@@ -24,6 +24,7 @@ const { default: axios } = require("axios");
 const SubscriptionHistory = require("../models/SubscriptionHistory");
 const BusinessSubscription = require("../models/BusinessSubscription");
 const SubscriptionTemplate = require("../models/SubscriptionTemplate");
+const PromotionLocation = require("../models/PromotionLocation");
 /**
  * Setup all model relationships
  */
@@ -84,6 +85,13 @@ const setupModelRelationships = () => {
   User.hasMany(Wishlist, {
     foreignKey: "userId",
     as: "wishlistItems",
+  });
+  Promotion.hasMany(PromotionLocation, {
+    foreignKey: "promotionId",
+    as: "locations",
+  });
+  PromotionLocation.belongsTo(Promotion, {
+    foreignKey: "promotionId",
   });
 
   // A Wishlist entry belongs to a Business (optional)

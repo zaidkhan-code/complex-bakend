@@ -44,16 +44,6 @@ const Promotion = sequelize.define(
       defaultValue: [],
     },
     // Support multiple cities/states/timezones for a promotion (JSON arrays)
-    cities: {
-      type: DataTypes.JSONB,
-      defaultValue: [],
-      comment: "Array of city objects or codes for targeted cities",
-    },
-    states: {
-      type: DataTypes.JSONB,
-      defaultValue: [],
-      comment: "Array of state objects or state codes for targeted states",
-    },
     runDate: {
       type: DataTypes.DATEONLY,
       allowNull: false,
@@ -123,6 +113,48 @@ const Promotion = sequelize.define(
   },
   {
     timestamps: true,
+    indexes: [
+      {
+        name: "idx_promotions_status",
+        fields: ["status"],
+      },
+      {
+        name: "idx_promotions_business_id",
+        fields: ["businessId"],
+      },
+      {
+        name: "idx_promotions_business_status_created",
+        fields: ["businessId", "status", "createdAt"],
+      },
+      {
+        name: "idx_promotions_run_stop",
+        fields: ["runDate", "stopDate"],
+      },
+      {
+        name: "idx_promotions_payment_status",
+        fields: ["paymentStatus"],
+      },
+      {
+        name: "idx_promotions_categories_gin",
+        using: "gin",
+        fields: ["categories"],
+      },
+      {
+        name: "idx_promotions_cities_gin",
+        using: "gin",
+        fields: ["cities"],
+      },
+      {
+        name: "idx_promotions_states_gin",
+        using: "gin",
+        fields: ["states"],
+      },
+      {
+        name: "idx_promotions_timezones_gin",
+        using: "gin",
+        fields: ["timezones"],
+      },
+    ],
   },
 );
 
