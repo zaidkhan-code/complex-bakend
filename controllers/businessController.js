@@ -136,6 +136,18 @@ const getBusinessPromotionWithRelations = async (promotionId, businessId) => {
 };
 
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const normalizeTemplateId = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+
+  return UUID_REGEX.test(normalized) ? normalized : null;
+};
 
 const normalizeTimezoneText = (value) => {
   if (typeof value === "string") return value;
@@ -282,6 +294,8 @@ const createPromotion = async (req, res) => {
       categories = [],
     } = req.body;
 
+    const normalizedTemplateId = normalizeTemplateId(templateId);
+
     if (!imageUrl || !runDate || !stopDate || !runTime || !stopTime) {
       return res.status(400).json({
         message:
@@ -331,7 +345,7 @@ const createPromotion = async (req, res) => {
 
     const promotion = await Promotion.create({
       businessId: business.id,
-      templateId: templateId || null,
+      templateId: normalizedTemplateId,
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
@@ -576,7 +590,9 @@ const updatePromotion = async (req, res) => {
       metadata,
     } = req.body;
 
-    if (templateId !== undefined) promotion.templateId = templateId;
+    if (templateId !== undefined) {
+      promotion.templateId = normalizeTemplateId(templateId);
+    }
     if (imageUrl !== undefined) promotion.imageUrl = imageUrl;
     if (text !== undefined) {
       promotion.text = Array.isArray(text) ? text : text ? [text] : [];

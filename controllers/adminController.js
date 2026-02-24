@@ -177,6 +177,19 @@ const isPromotionPastStopDate = (stopDateValue) => {
   return stopDate < todayUtc;
 };
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const normalizeTemplateId = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+
+  return UUID_REGEX.test(normalized) ? normalized : null;
+};
+
 // @desc    Get all users with filters
 // @route   GET /api/admin/users
 // @access  Private (Admin)
@@ -767,6 +780,7 @@ const updatePromotion = async (req, res) => {
       stopTime,
       categories = [],
     } = req.body;
+    const normalizedTemplateId = normalizeTemplateId(templateId);
 
     // Basic validation
     if (!runDate || !stopDate || !runTime || !stopTime) {
@@ -777,7 +791,9 @@ const updatePromotion = async (req, res) => {
 
     const wasExpired = promotion.status === "expired";
 
-    promotion.templateId = templateId;
+    if (templateId !== undefined) {
+      promotion.templateId = normalizedTemplateId;
+    }
     promotion.imageUrl = imageUrl || promotion.imageUrl;
     promotion.text = Array.isArray(text)
       ? text
@@ -845,6 +861,7 @@ const createPromotionForBusiness = async (req, res) => {
       stopTime,
       businessId: requestBusinessId,
     } = req.body;
+    const normalizedTemplateId = normalizeTemplateId(templateId);
 
     const businessId = requestBusinessId || req.params.businessId;
 
@@ -856,7 +873,7 @@ const createPromotionForBusiness = async (req, res) => {
     }
 
     const promotion = await Promotion.create({
-      templateId,
+      templateId: normalizedTemplateId,
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
