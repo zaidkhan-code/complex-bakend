@@ -859,13 +859,8 @@ const createPromotionForBusiness = async (req, res) => {
       metadata,
       categories = [],
       stopTime,
-      businessId: requestBusinessId,
     } = req.body;
     const normalizedTemplateId = normalizeTemplateId(templateId);
-
-    const businessId = requestBusinessId || req.params.businessId;
-
-    // Simple validation
     if (!runDate || !stopDate || !runTime || !stopTime) {
       return res
         .status(400)
@@ -877,7 +872,7 @@ const createPromotionForBusiness = async (req, res) => {
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
       backgroundColor: backgroundColor || "",
-      categories: categories.length ? categories : business.categories || [],
+      categories: categories.length ? categories : [],
       cities,
       states,
       timezones,
