@@ -121,7 +121,7 @@ router.put(
     require("../controllers/adminController").updatePromotion(req, res, next),
 );
 
-// Create promotion for any business (admin)
+// Create promotion directly as admin (no business selection)
 router.post(
   "/promotions",
   checkPermission("promotions", "create"),

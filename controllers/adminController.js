@@ -10,6 +10,17 @@ const {
   syncPromotionLocations,
   getPromotionLocationAttributes,
 } = require("../utils/promotionLocationUtils");
+const {
+  parseBoolean,
+  resolveScheduleTimezone,
+  buildSchedulePayload,
+  ensureValidScheduleWindow,
+  ensureNoScheduledOverlap,
+} = require("../utils/promotionScheduleUtils");
+const {
+  reschedulePromotionJobs,
+  cancelPromotionJobs,
+} = require("../services/promotionScheduler");
 
 const extractLatLng = (coordinates) => {
   const value = coordinates?.coordinates;
@@ -177,6 +188,25 @@ const isPromotionPastStopDate = (stopDateValue) => {
   return stopDate < todayUtc;
 };
 
+const calculateDurationMonths = (runDate, stopDate) => {
+  const start = new Date(runDate);
+  const end = new Date(stopDate);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    start > end
+  ) {
+    return 1;
+  }
+
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +
+    1
+  );
+};
+
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -188,6 +218,29 @@ const normalizeTemplateId = (value) => {
   if (!normalized) return null;
 
   return UUID_REGEX.test(normalized) ? normalized : null;
+};
+
+const getRequestTimezone = (req) =>
+  String(
+    req.headers["x-timezone"] || req.headers["x-user-timezone"] || "",
+  ).trim();
+
+const persistActorTimezone = async (
+  actor,
+  resolvedTimezone,
+  sourceTimezone,
+) => {
+  if (
+    !actor ||
+    !resolvedTimezone ||
+    !sourceTimezone ||
+    actor.timezone === resolvedTimezone
+  ) {
+    return;
+  }
+
+  actor.timezone = resolvedTimezone;
+  await actor.save({ fields: ["timezone", "updatedAt"] });
 };
 
 // @desc    Get all users with filters
@@ -456,6 +509,7 @@ const deletePromotion = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
+    await cancelPromotionJobs(promotion);
     await promotion.destroy();
 
     res.json({ message: "Promotion deleted successfully" });
@@ -674,22 +728,56 @@ const changePromotionStatus = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    if (status === "active" && isPromotionPastStopDate(promotion.stopDate)) {
-      return res.status(400).json({
-        message:
-          "Cannot activate an expired promotion. Extend the end date first, then activate it.",
-      });
+    if (status === "active") {
+      if (isPromotionPastStopDate(promotion.stopDate)) {
+        return res.status(400).json({
+          message:
+            "Cannot activate an expired promotion. Extend the end date first, then activate it.",
+        });
+      }
+
+      if (promotion.scheduleEnabled) {
+        const now = new Date();
+        const startAt = promotion.scheduleStartAt
+          ? new Date(promotion.scheduleStartAt)
+          : null;
+        const endAt = promotion.scheduleEndAt
+          ? new Date(promotion.scheduleEndAt)
+          : null;
+
+        if (endAt && now >= endAt) {
+          promotion.status = "expired";
+          await promotion.save({ fields: ["status", "updatedAt"] });
+          await reschedulePromotionJobs(promotion);
+          return res.status(400).json({
+            message:
+              "Cannot activate this promotion because its scheduled end time has already passed.",
+          });
+        }
+
+        if (startAt && now < startAt) {
+          return res.status(400).json({
+            message:
+              "This promotion is scheduled for a future start. Edit its schedule first, or wait for automatic activation.",
+          });
+        }
+      }
     }
 
     const oldStatus = promotion.status;
     promotion.status = status;
 
     // Set approvedAt timestamp when admin approves (marking inactive as approved)
-    if (status === "inactive" && oldStatus == "pending") {
+    if (status === "inactive" && oldStatus === "pending") {
       promotion.approvedAt = new Date();
     }
 
+    if (status === "active") {
+      promotion.approvedAt = promotion.approvedAt || new Date();
+    }
+
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     console.log(
       `🔄 [ADMIN] Promotion ${promotionId} status changed from ${oldStatus} to ${status}`,
@@ -703,7 +791,7 @@ const changePromotionStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Error changing promotion status:", error);
-    res.status(500).json({ message: error.message });
+    res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
@@ -722,9 +810,48 @@ const runPromotion = async (req, res) => {
       });
     }
 
+    if (promotion.scheduleEnabled) {
+      const now = new Date();
+      const startAt = promotion.scheduleStartAt
+        ? new Date(promotion.scheduleStartAt)
+        : null;
+      const endAt = promotion.scheduleEndAt
+        ? new Date(promotion.scheduleEndAt)
+        : null;
+
+      if (endAt && now >= endAt) {
+        promotion.status = "expired";
+        await promotion.save({ fields: ["status", "updatedAt"] });
+        await reschedulePromotionJobs(promotion);
+        return res.status(400).json({
+          message:
+            "Cannot activate this promotion because its scheduled end time has passed.",
+        });
+      }
+
+      if (startAt && now < startAt) {
+        return res.status(400).json({
+          message:
+            "This promotion has scheduling enabled and a future start time. It will auto-activate on schedule.",
+        });
+      }
+    }
+
+    await Promotion.update(
+      { status: "inactive" },
+      {
+        where: {
+          businessId: promotion.businessId,
+          status: "active",
+          id: { [Op.ne]: promotion.id },
+        },
+      },
+    );
+
     promotion.status = "active";
     promotion.approvedAt = promotion.approvedAt || new Date();
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     console.log(`✅ [ADMIN] Promotion ${promotionId} is now active`);
     res.json({
@@ -735,7 +862,7 @@ const runPromotion = async (req, res) => {
     });
   } catch (error) {
     console.error("Error running promotion:", error);
-    res.status(500).json({ message: error.message });
+    res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
@@ -779,38 +906,139 @@ const updatePromotion = async (req, res) => {
       metadata,
       stopTime,
       categories = [],
+      scheduleEnabled,
+      scheduleTimezone,
     } = req.body;
     const normalizedTemplateId = normalizeTemplateId(templateId);
 
-    // Basic validation
-    if (!runDate || !stopDate || !runTime || !stopTime) {
+    const targetBusinessId = promotion.businessId || req.body.businessId || null;
+
+    const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
+    const nextStopDate = stopDate !== undefined ? stopDate : promotion.stopDate;
+    const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
+    const nextStopTime = stopTime !== undefined ? stopTime : promotion.stopTime;
+
+    if (!nextRunDate || !nextStopDate || !nextRunTime || !nextStopTime) {
       return res
         .status(400)
         .json({ message: "Missing schedule or time fields" });
     }
 
-    const wasExpired = promotion.status === "expired";
+    let schedulePayload;
+    let isScheduleEnabled = false;
+
+    if (targetBusinessId) {
+      const business = await Business.findByPk(targetBusinessId, {
+        attributes: ["id", "timezone"],
+      });
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const resolvedTimezone = resolveScheduleTimezone({
+        scheduleTimezone:
+          scheduleTimezone !== undefined
+            ? scheduleTimezone
+            : promotion.scheduleTimezone,
+        ownerTimezone: business.timezone,
+        actorTimezone: req.user?.timezone || getRequestTimezone(req),
+      });
+      await persistActorTimezone(
+        req.user,
+        resolvedTimezone,
+        scheduleTimezone || getRequestTimezone(req),
+      );
+      if (scheduleTimezone && business.timezone !== resolvedTimezone) {
+        business.timezone = resolvedTimezone;
+        await business.save({ fields: ["timezone", "updatedAt"] });
+      }
+
+      schedulePayload = buildSchedulePayload({
+        runDate: nextRunDate,
+        stopDate: nextStopDate,
+        runTime: nextRunTime,
+        stopTime: nextStopTime,
+        scheduleTimezone: resolvedTimezone,
+      });
+
+      if (!schedulePayload) {
+        return res.status(400).json({
+          message:
+            "Invalid schedule values. Please provide valid runDate, stopDate, runTime, and stopTime.",
+        });
+      }
+
+      isScheduleEnabled =
+        scheduleEnabled !== undefined
+          ? parseBoolean(scheduleEnabled, promotion.scheduleEnabled)
+          : Boolean(promotion.scheduleEnabled);
+
+      if (isScheduleEnabled) {
+        ensureValidScheduleWindow(schedulePayload);
+        await ensureNoScheduledOverlap({
+          businessId: targetBusinessId,
+          scheduleStartAt: schedulePayload.scheduleStartAt,
+          scheduleEndAt: schedulePayload.scheduleEndAt,
+          excludePromotionId: promotion.id,
+        });
+      }
+    } else {
+      schedulePayload = buildSchedulePayload({
+        runDate: nextRunDate,
+        stopDate: nextStopDate,
+        runTime: nextRunTime,
+        stopTime: nextStopTime,
+        scheduleTimezone: promotion.scheduleTimezone || "UTC",
+      });
+
+      if (!schedulePayload) {
+        return res.status(400).json({
+          message:
+            "Invalid schedule values. Please provide valid runDate, stopDate, runTime, and stopTime.",
+        });
+      }
+
+      isScheduleEnabled = false;
+    }
 
     if (templateId !== undefined) {
       promotion.templateId = normalizedTemplateId;
     }
+    promotion.businessId = targetBusinessId;
     promotion.imageUrl = imageUrl || promotion.imageUrl;
     promotion.text = Array.isArray(text)
       ? text
       : text
         ? [text]
         : promotion.text;
-    promotion.backgroundColor = backgroundColor;
+    promotion.backgroundColor =
+      backgroundColor !== undefined
+        ? backgroundColor
+        : promotion.backgroundColor;
     promotion.cities = cities;
     promotion.states = states;
     promotion.timezones = timezones;
-    promotion.runDate = runDate;
-    promotion.stopDate = stopDate;
-    promotion.runTime = runTime;
-    promotion.stopTime = stopTime;
+    promotion.runDate = schedulePayload.runDate;
+    promotion.stopDate = schedulePayload.stopDate;
+    promotion.runTime = schedulePayload.runTime;
+    promotion.stopTime = schedulePayload.stopTime;
+    promotion.scheduleEnabled = isScheduleEnabled;
+    promotion.scheduleTimezone = schedulePayload.scheduleTimezone;
+    promotion.scheduleStartAt = isScheduleEnabled
+      ? schedulePayload.scheduleStartAt
+      : null;
+    promotion.scheduleEndAt = isScheduleEnabled
+      ? schedulePayload.scheduleEndAt
+      : null;
+    promotion.calculatedMonths = calculateDurationMonths(
+      schedulePayload.runDate,
+      schedulePayload.stopDate,
+    );
     promotion.categories = categories;
-    promotion.metadata = metadata;
+    promotion.metadata =
+      metadata && typeof metadata === "object" ? metadata : promotion.metadata;
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     try {
       await syncPromotionLocations({
@@ -832,15 +1060,16 @@ const updatePromotion = async (req, res) => {
     res.json({
       message: "Promotion updated",
       promotion: normalizePromotionForFrontend(updatedPromotion || promotion),
+      scheduleTimezone: schedulePayload.scheduleTimezone,
     });
   } catch (error) {
     console.error("Error updating promotion:", error);
-    res.status(500).json({ message: error.message });
+    res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
-// @desc    Create promotion for a given business (admin)
-// @route   POST /api/admin/businesses/:businessId/promotions
+// @desc    Create promotion directly by admin (no business selection required)
+// @route   POST /api/admin/promotions
 // @access  Private (Admin)
 const createPromotionForBusiness = async (req, res) => {
   try {
@@ -849,7 +1078,6 @@ const createPromotionForBusiness = async (req, res) => {
       imageUrl,
       text,
       backgroundColor,
-      category,
       cities = [],
       states = [],
       timezones = [],
@@ -861,13 +1089,32 @@ const createPromotionForBusiness = async (req, res) => {
       stopTime,
     } = req.body;
     const normalizedTemplateId = normalizeTemplateId(templateId);
-    if (!runDate || !stopDate || !runTime || !stopTime) {
-      return res
-        .status(400)
-        .json({ message: "Missing schedule or time fields" });
-    }
+
+    const now = new Date();
+    const defaultRunDate = now.toISOString().slice(0, 10);
+    const defaultStopDateObj = new Date(now);
+    defaultStopDateObj.setUTCDate(defaultStopDateObj.getUTCDate() + 30);
+    const defaultStopDate = defaultStopDateObj.toISOString().slice(0, 10);
+
+    const parsedRunDate = parseDateOnly(runDate);
+    const parsedStopDate = parseDateOnly(stopDate);
+    const normalizedRunDate = (parsedRunDate || new Date(defaultRunDate))
+      .toISOString()
+      .slice(0, 10);
+    const normalizedStopDate = (parsedStopDate || new Date(defaultStopDate))
+      .toISOString()
+      .slice(0, 10);
+    const normalizedRunTime =
+      typeof runTime === "string" && runTime.trim()
+        ? runTime.trim()
+        : "00:00:00";
+    const normalizedStopTime =
+      typeof stopTime === "string" && stopTime.trim()
+        ? stopTime.trim()
+        : "23:59:59";
 
     const promotion = await Promotion.create({
+      businessId: null,
       templateId: normalizedTemplateId,
       imageUrl,
       text: Array.isArray(text) ? text : text ? [text] : [],
@@ -876,17 +1123,29 @@ const createPromotionForBusiness = async (req, res) => {
       cities,
       states,
       timezones,
-      runDate,
-      metadata: { ...metadata, createdBy: "admin" },
-      stopDate,
-      runTime,
-      stopTime,
+      runDate: normalizedRunDate,
+      metadata:
+        metadata && typeof metadata === "object"
+          ? { ...metadata, createdBy: "admin" }
+          : { createdBy: "admin" },
+      stopDate: normalizedStopDate,
+      runTime: normalizedRunTime,
+      stopTime: normalizedStopTime,
+      scheduleEnabled: false,
+      scheduleTimezone: "UTC",
+      scheduleStartAt: null,
+      scheduleEndAt: null,
+      calculatedMonths: calculateDurationMonths(
+        normalizedRunDate,
+        normalizedStopDate,
+      ),
       price: 0, // Admin does not pay
       status: "inactive", // Admin-created and approved but not active
       autoApprove: true,
       paymentStatus: "completed",
       approvedAt: new Date(),
     });
+    await reschedulePromotionJobs(promotion);
 
     try {
       await syncPromotionLocations({
@@ -908,7 +1167,7 @@ const createPromotionForBusiness = async (req, res) => {
     });
   } catch (error) {
     console.error("ADMIN CREATE PROMOTION ERROR:", error);
-    res.status(500).json({ message: error.message });
+    res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 const toggleBusinessAutoApprove = async (req, res) => {
@@ -961,6 +1220,7 @@ const approvePromotion = async (req, res) => {
     promotion.status = "inactive"; // Approved but NOT active
     promotion.approvedAt = new Date();
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     console.log(`✅ [ADMIN] Promotion ${promotion.id} approved`);
     res.json({ message: "Promotion approved", promotion });

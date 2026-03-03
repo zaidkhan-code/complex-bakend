@@ -60,6 +60,12 @@ const User = sequelize.define(
       type: DataTypes.ENUM("active", "inactive", "blocked", "suspended"),
       defaultValue: "active",
     },
+    timezone: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "UTC",
+      comment: "User timezone used for admin/business schedule actions",
+    },
   },
   {
     timestamps: true,

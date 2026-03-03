@@ -53,6 +53,12 @@ const Business = sequelize.define(
     state: {
       type: DataTypes.STRING,
     },
+    timezone: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "UTC",
+      comment: "Business timezone for schedule interpretation",
+    },
     autoApprovePromotions: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,

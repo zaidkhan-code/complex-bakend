@@ -7,6 +7,16 @@ const {
   syncPromotionLocations,
   getPromotionLocationAttributes,
 } = require("../utils/promotionLocationUtils");
+const {
+  parseBoolean,
+  buildSchedulePayload,
+  ensureValidScheduleWindow,
+  ensureNoScheduledOverlap,
+} = require("../utils/promotionScheduleUtils");
+const {
+  reschedulePromotionJobs,
+  cancelPromotionJobs,
+} = require("../services/promotionScheduler");
 
 const extractLatLng = (coordinates) => {
   const value = coordinates?.coordinates;
@@ -149,13 +159,15 @@ const normalizeTemplateId = (value) => {
   return UUID_REGEX.test(normalized) ? normalized : null;
 };
 
-const normalizeTimezoneText = (value) => {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object") {
-    return value.timezone || value.value || value.name || "";
-  }
-  return "";
-};
+const EXTRA_STATE_PRICE = 20;
+
+const buildApiErrorPayload = (error, fallbackMessage = "Server error") => ({
+  message: error?.message || fallbackMessage,
+  ...(error?.code ? { code: error.code } : {}),
+  ...(error?.conflictPromotionId
+    ? { conflictPromotionId: error.conflictPromotionId }
+    : {}),
+});
 
 const normalizeStateCode = (value) =>
   String(value || "")
@@ -290,6 +302,9 @@ const createPromotion = async (req, res) => {
       stopDate,
       runTime,
       stopTime,
+      scheduleStartAt,
+      scheduleEndAt,
+      scheduleEnabled,
       metadata = {},
       categories = [],
     } = req.body;
@@ -303,45 +318,40 @@ const createPromotion = async (req, res) => {
       });
     }
 
+    const schedulePayload = buildSchedulePayload({
+      runDate,
+      stopDate,
+      runTime,
+      stopTime,
+      scheduleStartAt,
+      scheduleEndAt,
+    });
+
+    if (!schedulePayload) {
+      return res.status(400).json({
+        message:
+          "Invalid schedule values. Please provide valid runDate, stopDate, runTime, and stopTime.",
+      });
+    }
+
+    const isScheduleEnabled = parseBoolean(scheduleEnabled, false);
+    if (isScheduleEnabled) {
+      ensureValidScheduleWindow(schedulePayload);
+      await ensureNoScheduledOverlap({
+        businessId: business.id,
+        scheduleStartAt: schedulePayload.scheduleStartAt,
+        scheduleEndAt: schedulePayload.scheduleEndAt,
+      });
+    }
+
     const safeStates = normalizeArray(states);
     const safeCities = normalizeArray(cities);
     const safeTimezones = normalizeArray(timezones);
 
     const freeStates = Number(subscription.freeStates || 0);
-    const freeTimezones = Number(subscription.freeTimezones || 0);
-
     const extraStates = Math.max(0, safeStates.length - freeStates);
-    const extraTimezones = Math.max(0, safeTimezones.length - freeTimezones);
-
-    const isOnlineStore = business.businessType === "online-ecommerce";
-    const hasEasternTimezone = safeTimezones.some((tz) =>
-      normalizeTimezoneText(tz).toLowerCase().includes("eastern"),
-    );
-
-    let stateCost = 0;
-    let timezoneCost = 0;
-
-    if (extraStates > 0) {
-      stateCost = isOnlineStore ? extraStates * 10 : extraStates * 20;
-    }
-
-    if (extraTimezones > 0) {
-      if (hasEasternTimezone) {
-        const nonEasternCount = safeTimezones.filter(
-          (tz) => !normalizeTimezoneText(tz).toLowerCase().includes("eastern"),
-        ).length;
-
-        timezoneCost = isOnlineStore
-          ? nonEasternCount * 30 + 50
-          : nonEasternCount * 60 + 100;
-      } else {
-        timezoneCost = isOnlineStore
-          ? extraTimezones * 30
-          : extraTimezones * 60;
-      }
-    }
-
-    const totalPrice = stateCost + timezoneCost;
+    const stateCost = extraStates > 0 ? extraStates * EXTRA_STATE_PRICE : 0;
+    const totalPrice = stateCost;
 
     const promotion = await Promotion.create({
       businessId: business.id,
@@ -356,11 +366,18 @@ const createPromotion = async (req, res) => {
       cities: safeCities,
       states: safeStates,
       timezones: safeTimezones,
-      runDate,
-      stopDate,
-      runTime,
-      stopTime,
-      calculatedMonths: calculateDurationMonths(runDate, stopDate),
+      runDate: schedulePayload.runDate,
+      stopDate: schedulePayload.stopDate,
+      runTime: schedulePayload.runTime,
+      stopTime: schedulePayload.stopTime,
+      scheduleEnabled: isScheduleEnabled,
+      scheduleTimezone: schedulePayload.scheduleTimezone,
+      scheduleStartAt: schedulePayload.scheduleStartAt,
+      scheduleEndAt: schedulePayload.scheduleEndAt,
+      calculatedMonths: calculateDurationMonths(
+        schedulePayload.runDate,
+        schedulePayload.stopDate,
+      ),
       price: totalPrice,
       status:
         totalPrice > 0
@@ -372,6 +389,8 @@ const createPromotion = async (req, res) => {
       paymentStatus: totalPrice > 0 ? "pending" : "completed",
       metadata: metadata && typeof metadata === "object" ? metadata : {},
     });
+
+    await reschedulePromotionJobs(promotion);
 
     try {
       await syncPromotionLocations({
@@ -416,19 +435,18 @@ const createPromotion = async (req, res) => {
           promotionId: promotion.id,
           businessId: business.id,
         },
-        description: `Promotion add-ons: ${extraStates} extra states, ${extraTimezones} extra timezones`,
+        description: `Promotion add-ons: ${extraStates} extra states`,
       });
 
       return res.status(201).json({
         message: "Promotion created. Payment is required to proceed.",
         promotion: normalizedPromotion,
+        scheduleTimezone: schedulePayload.scheduleTimezone,
         pricing: {
           freeStates,
-          freeTimezones,
           extraStates,
-          extraTimezones,
+          stateUnitPrice: EXTRA_STATE_PRICE,
           stateCost,
-          timezoneCost,
           total: totalPrice,
         },
         clientSecret: paymentIntent.client_secret,
@@ -439,13 +457,12 @@ const createPromotion = async (req, res) => {
     return res.status(201).json({
       message: "Promotion created successfully",
       promotion: normalizedPromotion,
+      scheduleTimezone: schedulePayload.scheduleTimezone,
       pricing: {
         freeStates,
-        freeTimezones,
         extraStates,
-        extraTimezones,
+        stateUnitPrice: EXTRA_STATE_PRICE,
         stateCost,
-        timezoneCost,
         total: totalPrice,
       },
       clientSecret: null,
@@ -453,7 +470,8 @@ const createPromotion = async (req, res) => {
     });
   } catch (error) {
     console.error("CREATE PROMOTION ERROR:", error);
-    res.status(500).json({ message: error.message });
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json(buildApiErrorPayload(error));
   }
 };
 
@@ -588,7 +606,52 @@ const updatePromotion = async (req, res) => {
       timezones,
       categories,
       metadata,
+      scheduleEnabled,
+      scheduleStartAt,
+      scheduleEndAt,
     } = req.body;
+
+    const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
+    const nextStopDate = stopDate !== undefined ? stopDate : promotion.stopDate;
+    const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
+    const nextStopTime = stopTime !== undefined ? stopTime : promotion.stopTime;
+    const nextScheduleStartAt =
+      scheduleStartAt !== undefined
+        ? scheduleStartAt
+        : promotion.scheduleStartAt;
+    const nextScheduleEndAt =
+      scheduleEndAt !== undefined ? scheduleEndAt : promotion.scheduleEndAt;
+
+    const schedulePayload = buildSchedulePayload({
+      runDate: nextRunDate,
+      stopDate: nextStopDate,
+      runTime: nextRunTime,
+      stopTime: nextStopTime,
+      scheduleStartAt: nextScheduleStartAt,
+      scheduleEndAt: nextScheduleEndAt,
+    });
+
+    if (!schedulePayload) {
+      return res.status(400).json({
+        message:
+          "Invalid schedule values. Please provide valid runDate, stopDate, runTime, and stopTime.",
+      });
+    }
+
+    const isScheduleEnabled =
+      scheduleEnabled !== undefined
+        ? parseBoolean(scheduleEnabled, promotion.scheduleEnabled)
+        : Boolean(promotion.scheduleEnabled);
+
+    if (isScheduleEnabled) {
+      ensureValidScheduleWindow(schedulePayload);
+      await ensureNoScheduledOverlap({
+        businessId: req.business.id,
+        scheduleStartAt: schedulePayload.scheduleStartAt,
+        scheduleEndAt: schedulePayload.scheduleEndAt,
+        excludePromotionId: promotion.id,
+      });
+    }
 
     if (templateId !== undefined) {
       promotion.templateId = normalizeTemplateId(templateId);
@@ -599,10 +662,14 @@ const updatePromotion = async (req, res) => {
     }
     if (backgroundColor !== undefined)
       promotion.backgroundColor = backgroundColor;
-    if (runDate !== undefined) promotion.runDate = runDate;
-    if (stopDate !== undefined) promotion.stopDate = stopDate;
-    if (runTime !== undefined) promotion.runTime = runTime;
-    if (stopTime !== undefined) promotion.stopTime = stopTime;
+    promotion.runDate = schedulePayload.runDate;
+    promotion.stopDate = schedulePayload.stopDate;
+    promotion.runTime = schedulePayload.runTime;
+    promotion.stopTime = schedulePayload.stopTime;
+    promotion.scheduleEnabled = isScheduleEnabled;
+    promotion.scheduleTimezone = schedulePayload.scheduleTimezone;
+    promotion.scheduleStartAt = schedulePayload.scheduleStartAt;
+    promotion.scheduleEndAt = schedulePayload.scheduleEndAt;
     if (Array.isArray(states)) promotion.states = states;
     if (Array.isArray(cities)) promotion.cities = cities;
     if (Array.isArray(timezones)) promotion.timezones = timezones;
@@ -617,6 +684,7 @@ const updatePromotion = async (req, res) => {
     }
 
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     if (
       Array.isArray(states) ||
@@ -646,9 +714,11 @@ const updatePromotion = async (req, res) => {
     res.json({
       message: "Promotion updated successfully",
       promotion: normalizePromotionForFrontend(updatedPromotion || promotion),
+      scheduleTimezone: schedulePayload.scheduleTimezone,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json(buildApiErrorPayload(error));
   }
 };
 
@@ -668,6 +738,7 @@ const deletePromotion = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
+    await cancelPromotionJobs(promotion);
     await promotion.destroy();
 
     res.json({ message: "Promotion deleted" });
@@ -756,9 +827,42 @@ const activatePromotion = async (req, res) => {
       });
     }
 
+    if (promotion.scheduleEnabled) {
+      const now = new Date();
+      const startAt = promotion.scheduleStartAt
+        ? new Date(promotion.scheduleStartAt)
+        : null;
+      const endAt = promotion.scheduleEndAt
+        ? new Date(promotion.scheduleEndAt)
+        : null;
+
+      if (endAt && now >= endAt) {
+        promotion.status = "expired";
+        await promotion.save({ fields: ["status", "updatedAt"] });
+        await reschedulePromotionJobs(promotion);
+        return res.status(400).json({
+          message:
+            "This promotion has already reached its scheduled end time and is expired.",
+        });
+      }
+
+      if (startAt && now < startAt) {
+        return res.status(400).json({
+          message:
+            "This promotion has scheduling enabled and will activate automatically at its scheduled start time.",
+        });
+      }
+    }
+
     await Promotion.update(
       { status: "inactive" },
-      { where: { businessId: req.business.id, status: "active" } },
+      {
+        where: {
+          businessId: req.business.id,
+          status: "active",
+          id: { [Op.ne]: promotion.id },
+        },
+      },
     );
 
     promotion.status = "active";
@@ -766,6 +870,7 @@ const activatePromotion = async (req, res) => {
       promotion.approvedAt = new Date();
     }
     await promotion.save();
+    await reschedulePromotionJobs(promotion);
 
     const updated = await getBusinessPromotionWithRelations(
       promotion.id,

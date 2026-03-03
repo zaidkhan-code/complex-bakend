@@ -1,6 +1,10 @@
 const app = require("./app");
 const { connectDB, sequelize } = require("./config/db");
-const { startCronJobs } = require("./config/cronJobs");
+const { startCronJobs, stopCronJobs } = require("./config/cronJobs");
+const { startPgBoss, stopPgBoss } = require("./config/pgBoss");
+const {
+  registerPromotionScheduleWorkers,
+} = require("./services/promotionScheduler");
 require("dotenv").config();
 
 const PORT = process.env.PORT || 5000;
@@ -9,6 +13,10 @@ const startServer = async () => {
   try {
     // Connect to database
     await connectDB();
+
+    // Start pg-boss + workers for promotion scheduling
+    await startPgBoss();
+    await registerPromotionScheduleWorkers();
 
     // Start cron jobs
     startCronJobs();
@@ -34,6 +42,8 @@ process.on("unhandledRejection", (err) => {
 // Handle SIGTERM
 process.on("SIGTERM", async () => {
   console.log("SIGTERM received, closing server gracefully");
+  stopCronJobs();
+  await stopPgBoss();
   await sequelize.close();
   process.exit(0);
 });

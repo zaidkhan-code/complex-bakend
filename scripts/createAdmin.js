@@ -16,7 +16,7 @@
 const { sequelize } = require("../config/db");
 const User = require("../models/User");
 const readline = require("readline");
-const path = require("path");
+
 
 // Color codes for console output
 const colors = {
@@ -98,7 +98,7 @@ const createAdmin = async () => {
     console.log(`${colors.blue}Connecting to database...${colors.reset}`);
     await sequelize.authenticate();
     await sequelize.sync();
-    console.log(`${colors.green}✓ Database connected${colors.reset}\n`);
+    console.log(`${colors.green}[OK] Database connected${colors.reset}\n`);
 
     // Get command line arguments
     const args = parseArgs();
@@ -117,13 +117,13 @@ const createAdmin = async () => {
     } else {
       // Interactive mode
       console.log(
-        `${colors.bold}${colors.blue}╔════════════════════════════════════════╗${colors.reset}`
+        `${colors.bold}${colors.blue}========================================${colors.reset}`
       );
       console.log(
-        `${colors.bold}${colors.blue}║     Create New Admin User              ║${colors.reset}`
+        `${colors.bold}${colors.blue}Create New Admin User${colors.reset}`
       );
       console.log(
-        `${colors.bold}${colors.blue}╚════════════════════════════════════════╝${colors.reset}\n`
+        `${colors.bold}${colors.blue}========================================${colors.reset}\n`
       );
 
       // Get full name
@@ -133,7 +133,7 @@ const createAdmin = async () => {
         );
         if (!adminData.fullName.trim()) {
           console.log(
-            `${colors.red}✗ Full name cannot be empty${colors.reset}`
+            `${colors.red}[ERROR] Full name cannot be empty${colors.reset}`
           );
         }
       }
@@ -145,7 +145,7 @@ const createAdmin = async () => {
         );
         if (!validateEmail(adminData.email)) {
           console.log(
-            `${colors.red}✗ Please enter a valid email address${colors.reset}`
+            `${colors.red}[ERROR] Please enter a valid email address${colors.reset}`
           );
         }
       }
@@ -157,7 +157,7 @@ const createAdmin = async () => {
         );
         const validation = validatePassword(adminData.password);
         if (!validation.valid) {
-          console.log(`${colors.red}✗ ${validation.message}${colors.reset}`);
+          console.log(`${colors.red}[ERROR] ${validation.message}${colors.reset}`);
           adminData.password = null;
         }
       }
@@ -186,7 +186,7 @@ const createAdmin = async () => {
 
     if (existingAdmin) {
       console.log(
-        `${colors.red}✗ An account with email "${adminData.email}" already exists${colors.reset}`
+        `${colors.red}[ERROR] An account with email "${adminData.email}" already exists${colors.reset}`
       );
       process.exit(1);
     }
@@ -203,13 +203,13 @@ const createAdmin = async () => {
     // Display success message
     console.log("\n");
     console.log(
-      `${colors.green}${colors.bold}╔════════════════════════════════════════╗${colors.reset}`
+      `${colors.green}${colors.bold}========================================${colors.reset}`
     );
     console.log(
-      `${colors.green}${colors.bold}║   Admin User Created Successfully!    ║${colors.reset}`
+      `${colors.green}${colors.bold}Admin User Created Successfully!${colors.reset}`
     );
     console.log(
-      `${colors.green}${colors.bold}╚════════════════════════════════════════╝${colors.reset}\n`
+      `${colors.green}${colors.bold}========================================${colors.reset}\n`
     );
 
     console.log(`${colors.bold}Admin Details:${colors.reset}`);
@@ -228,16 +228,16 @@ const createAdmin = async () => {
     console.log("\n");
 
     console.log(
-      `${colors.yellow}⚠️  Note: Save these credentials in a secure location${colors.reset}`
+      `${colors.yellow}[WARNING] Save these credentials in a secure location${colors.reset}`
     );
     console.log(
-      `${colors.yellow}⚠️  Users can change their password after first login${colors.reset}\n`
+      `${colors.yellow}[WARNING] Users can change their password after first login${colors.reset}\n`
     );
 
     process.exit(0);
   } catch (error) {
     console.error(
-      `\n${colors.red}${colors.bold}✗ Error:${colors.reset} ${error.message}`
+      `\n${colors.red}${colors.bold}[ERROR]${colors.reset} ${error.message}`
     );
     process.exit(1);
   } finally {

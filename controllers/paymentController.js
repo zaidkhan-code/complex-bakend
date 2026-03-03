@@ -3,6 +3,7 @@ const Business = require("../models/Business");
 const Promotion = require("../models/Promotion");
 const SubscriptionTemplate = require("../models/SubscriptionTemplate");
 const BusinessSubscription = require("../models/BusinessSubscription");
+const { reschedulePromotionJobs } = require("../services/promotionScheduler");
 
 const handleWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
@@ -96,6 +97,7 @@ const handleWebhook = async (req, res) => {
         }
 
         await promotion.save();
+        await reschedulePromotionJobs(promotion);
 
         console.log(`✅ [WEBHOOK] Promotion ${promotionId} payment completed`);
       }

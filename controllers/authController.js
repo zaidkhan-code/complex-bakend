@@ -8,7 +8,7 @@ const Role = require("../models/Role");
 // @access  Public
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, timezone } = req.body;
 
     // Check if user exists
     const userExists = await User.findOne({ where: { email } });
@@ -22,6 +22,7 @@ const registerUser = async (req, res) => {
       email,
       password,
       role: "user",
+      timezone: timezone || "UTC",
     });
 
     if (user) {
@@ -52,6 +53,7 @@ const registerBusiness = async (req, res) => {
       businessType,
       personName,
       businessAddress,
+      timezone,
     } = req.body;
     console.log(
       `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}, Categories: ${JSON.stringify(
@@ -83,6 +85,7 @@ const registerBusiness = async (req, res) => {
       personName: personName || null,
       businessAddress: businessAddress || null,
       autoApprovePromotions: false, // Default: admin must approve
+      timezone: timezone || "UTC",
     });
 
     console.log(
@@ -170,6 +173,7 @@ const login = async (req, res) => {
       token,
       fullName: account.fullName,
       avatarUrl: account.avatarUrl,
+      timezone: account.timezone || "UTC",
     };
 
     // =========================
@@ -204,7 +208,7 @@ const login = async (req, res) => {
     return res.json(response);
   } catch (error) {
     console.error("Login error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: error?.message });
   }
 };
 

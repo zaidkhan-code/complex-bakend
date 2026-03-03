@@ -60,6 +60,40 @@ const Promotion = sequelize.define(
       type: DataTypes.TIME,
       allowNull: false,
     },
+    scheduleEnabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment:
+        "If true, promotion lifecycle is automatically controlled by scheduled time window",
+    },
+    scheduleTimezone: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "UTC",
+      comment:
+        "IANA timezone used to interpret runDate/runTime and stopDate/stopTime",
+    },
+    scheduleStartAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Promotion start datetime in UTC",
+    },
+    scheduleEndAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Promotion end datetime in UTC",
+    },
+    activationJobId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "pg-boss job id for scheduled activation",
+    },
+    expirationJobId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "pg-boss job id for scheduled expiration",
+    },
     // Calculated number of months the promotion runs for (derived from runDate/stopDate)
     calculatedMonths: {
       type: DataTypes.INTEGER,
@@ -133,6 +167,14 @@ const Promotion = sequelize.define(
       {
         name: "idx_promotions_payment_status",
         fields: ["paymentStatus"],
+      },
+      {
+        name: "idx_promotions_business_schedule_window",
+        fields: ["businessId", "scheduleEnabled", "scheduleStartAt", "scheduleEndAt"],
+      },
+      {
+        name: "idx_promotions_schedule_end",
+        fields: ["scheduleEndAt"],
       },
       {
         name: "idx_promotions_categories_gin",

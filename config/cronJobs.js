@@ -3,6 +3,7 @@ const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
+const { reschedulePromotionJobs } = require("../services/promotionScheduler");
 
 const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
   try {
@@ -22,6 +23,7 @@ const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
       promo.status = "inactive";
       promo.approvedAt = now;
       await promo.save();
+      await reschedulePromotionJobs(promo);
       console.log(`Auto-approved promotion ${promo.id} (24h passed)`);
     }
   } catch (error) {
@@ -36,7 +38,10 @@ const runExpirePromotions = async () => {
       SET "status" = 'expired',
           "updatedAt" = NOW()
       WHERE "status" IN ('active', 'inactive', 'pending')
-        AND "stopDate" < CURRENT_DATE
+        AND (
+          ("scheduleEnabled" = TRUE AND "scheduleEndAt" IS NOT NULL AND "scheduleEndAt" <= NOW())
+          OR ("scheduleEnabled" = FALSE AND "stopDate" < CURRENT_DATE)
+        )
       RETURNING "id";
     `);
 
