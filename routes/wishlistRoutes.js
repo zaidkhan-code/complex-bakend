@@ -15,7 +15,7 @@ const { protect } = require("../middleware/authMiddleware");
 router.get("/popular", getPopularPromos);
 
 // Private routes - require authentication
-router.use(protect("user"));
+router.use(protect());
 
 // Get user/business wishlist
 router.get("/", getWishlist);
@@ -26,11 +26,11 @@ router.get("/check/:promotionId", checkWishlistStatus);
 // Add promotion to wishlist
 router.post("/", addToWishlist);
 
-// Remove promotion from wishlist
-router.delete("/:promotionId", removeFromWishlist);
-
 // Clear entire wishlist
 router.delete("/clear-all", clearWishlist);
+
+// Remove promotion from wishlist
+router.delete("/:promotionId", removeFromWishlist);
 
 // Business statistics
 router.get("/stats/business", getWishlistStats);

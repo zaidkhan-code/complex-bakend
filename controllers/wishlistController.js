@@ -1,9 +1,31 @@
 const Wishlist = require("../models/Wishlist");
 const Promotion = require("../models/Promotion");
-const User = require("../models/User");
 const Business = require("../models/Business");
-const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
+
+const resolveWishlistOwner = (req) => {
+  if (req.authType === "business" && req.business?.id) {
+    return {
+      accountType: "business",
+      ownerField: "businessId",
+      ownerId: req.business.id,
+      businessId: req.business.id,
+      userId: null,
+    };
+  }
+
+  if (req.authType === "user" && req.user?.id) {
+    return {
+      accountType: "user",
+      ownerField: "userId",
+      ownerId: req.user.id,
+      userId: req.user.id,
+      businessId: null,
+    };
+  }
+
+  return null;
+};
 
 // @desc    Add promotion to wishlist
 // @route   POST /api/wishlist
@@ -19,16 +41,13 @@ const addToWishlist = async (req, res) => {
       });
     }
 
-    // Make sure user is authenticated
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
+    const owner = resolveWishlistOwner(req);
+    if (!owner) {
+      return res.status(403).json({
         success: false,
-        message: "Unauthorized user",
+        message: "Only user or business accounts can save promotions",
       });
     }
-    console.log(req.user, "user data check please/////////");
-
-    const userId = req.user.id;
 
     // Check if promotion exists
     const promotion = await Promotion.findByPk(promotionId);
@@ -41,10 +60,26 @@ const addToWishlist = async (req, res) => {
 
     // Check if already in wishlist
     const existingWishlist = await Wishlist.findOne({
-      where: { userId, promotionId },
+      where: {
+        promotionId,
+        [owner.ownerField]: owner.ownerId,
+      },
     });
 
     if (existingWishlist) {
+      if (existingWishlist.status === "removed") {
+        await existingWishlist.update({
+          status: "active",
+          savedAt: new Date(),
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Added to wishlist successfully",
+          data: existingWishlist,
+        });
+      }
+
       return res.status(400).json({
         success: false,
         message: "Promotion already in wishlist",
@@ -53,7 +88,8 @@ const addToWishlist = async (req, res) => {
 
     // Create wishlist entry
     const wishlistEntry = await Wishlist.create({
-      userId,
+      userId: owner.userId,
+      businessId: owner.businessId,
       promotionId,
       status: "active",
     });
@@ -83,20 +119,19 @@ const removeFromWishlist = async (req, res) => {
   try {
     const { promotionId } = req.params;
 
-    // Ensure user auth
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
+    const owner = resolveWishlistOwner(req);
+    if (!owner) {
+      return res.status(403).json({
         success: false,
-        message: "Unauthorized user",
+        message: "Only user or business accounts can remove saved promotions",
       });
     }
-
-    const userId = req.user.id;
 
     const wishlistEntry = await Wishlist.findOne({
       where: {
         promotionId,
-        userId,
+        status: "active",
+        [owner.ownerField]: owner.ownerId,
       },
     });
 
@@ -132,20 +167,18 @@ const getWishlist = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // Ensure user authentication
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
+    const owner = resolveWishlistOwner(req);
+    if (!owner) {
+      return res.status(403).json({
         success: false,
-        message: "Unauthorized user",
+        message: "Only user or business accounts can access wishlist",
       });
     }
 
-    const userId = req.user.id;
-
     const { count, rows } = await Wishlist.findAndCountAll({
       where: {
-        userId,
         status: "active",
+        [owner.ownerField]: owner.ownerId,
       },
       include: [
         {
@@ -200,17 +233,20 @@ const getWishlist = async (req, res) => {
 const checkWishlistStatus = async (req, res) => {
   try {
     const { promotionId } = req.params;
+    const owner = resolveWishlistOwner(req);
 
-    // Determine if the requester is a user or business
-    const userId = req.user.accountType === "business" ? null : req.user.id;
-    const businessId = req.user.accountType === "business" ? req.user.id : null;
+    if (!owner) {
+      return res.status(403).json({
+        success: false,
+        message: "Only user or business accounts can check wishlist status",
+      });
+    }
 
     const wishlistEntry = await Wishlist.findOne({
       where: {
         promotionId,
         status: "active",
-        ...(userId && { userId }),
-        ...(businessId && { businessId }),
+        [owner.ownerField]: owner.ownerId,
       },
     });
 
@@ -233,30 +269,15 @@ const checkWishlistStatus = async (req, res) => {
 // @access  Private (Business)
 const getWishlistStats = async (req, res) => {
   try {
-    if (req.user.accountType !== "business") {
+    const owner = resolveWishlistOwner(req);
+    if (!owner || owner.accountType !== "business") {
       return res.status(403).json({
         success: false,
         message: "Only business accounts can access this endpoint",
       });
     }
 
-    const businessId = req.user.id;
-
-    // Get count of wishlists for this business's promotions
-    const stats = await Wishlist.findAll({
-      attributes: ["promotionId"],
-      include: [
-        {
-          model: Promotion,
-          as: "Promotion",
-          where: { businessId },
-          attributes: ["id"],
-          required: true,
-        },
-      ],
-      where: { status: "active" },
-      raw: true,
-    });
+    const businessId = owner.businessId;
 
     // Count unique users and businesses that saved promotions
     const uniqueSaves = await Wishlist.findAll({
@@ -366,16 +387,19 @@ const getPopularPromos = async (req, res) => {
 // @access  Private (User or Business)
 const clearWishlist = async (req, res) => {
   try {
-    // Determine if the requester is a user or business
-    const userId = req.user.accountType === "business" ? null : req.user.id;
-    const businessId = req.user.accountType === "business" ? req.user.id : null;
+    const owner = resolveWishlistOwner(req);
+    if (!owner) {
+      return res.status(403).json({
+        success: false,
+        message: "Only user or business accounts can clear wishlist",
+      });
+    }
 
     const result = await Wishlist.update(
       { status: "removed" },
       {
         where: {
-          ...(userId && { userId }),
-          ...(businessId && { businessId }),
+          [owner.ownerField]: owner.ownerId,
           status: "active",
         },
       },
