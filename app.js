@@ -16,6 +16,8 @@ app.use(helmet());
 const defaultOrigins = [
   "https://complisk.vercel.app",
   "https://complisk-codex-utpn.vercel.app",
+  "https://complisk.com",
+  "https://www.complisk.com",
   "http://localhost:8000",
   "http://localhost:8080",
   "http://localhost:3001",
