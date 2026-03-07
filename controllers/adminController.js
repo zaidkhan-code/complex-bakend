@@ -225,24 +225,6 @@ const getRequestTimezone = (req) =>
     req.headers["x-timezone"] || req.headers["x-user-timezone"] || "",
   ).trim();
 
-const persistActorTimezone = async (
-  actor,
-  resolvedTimezone,
-  sourceTimezone,
-) => {
-  if (
-    !actor ||
-    !resolvedTimezone ||
-    !sourceTimezone ||
-    actor.timezone === resolvedTimezone
-  ) {
-    return;
-  }
-
-  actor.timezone = resolvedTimezone;
-  await actor.save({ fields: ["timezone", "updatedAt"] });
-};
-
 // @desc    Get all users with filters
 // @route   GET /api/admin/users
 // @access  Private (Admin)
@@ -728,40 +710,11 @@ const changePromotionStatus = async (req, res) => {
       return res.status(404).json({ message: "Promotion not found" });
     }
 
-    if (status === "active") {
-      if (isPromotionPastStopDate(promotion.stopDate)) {
-        return res.status(400).json({
-          message:
-            "Cannot activate an expired promotion. Extend the end date first, then activate it.",
-        });
-      }
-
-      if (promotion.scheduleEnabled) {
-        const now = new Date();
-        const startAt = promotion.scheduleStartAt
-          ? new Date(promotion.scheduleStartAt)
-          : null;
-        const endAt = promotion.scheduleEndAt
-          ? new Date(promotion.scheduleEndAt)
-          : null;
-
-        if (endAt && now >= endAt) {
-          promotion.status = "expired";
-          await promotion.save({ fields: ["status", "updatedAt"] });
-          await reschedulePromotionJobs(promotion);
-          return res.status(400).json({
-            message:
-              "Cannot activate this promotion because its scheduled end time has already passed.",
-          });
-        }
-
-        if (startAt && now < startAt) {
-          return res.status(400).json({
-            message:
-              "This promotion is scheduled for a future start. Edit its schedule first, or wait for automatic activation.",
-          });
-        }
-      }
+    if (status === "active" && isPromotionPastStopDate(promotion.stopDate)) {
+      return res.status(400).json({
+        message:
+          "Cannot activate an expired promotion. Extend the end date first, then activate it.",
+      });
     }
 
     const oldStatus = promotion.status;
@@ -776,8 +729,7 @@ const changePromotionStatus = async (req, res) => {
       promotion.approvedAt = promotion.approvedAt || new Date();
     }
 
-    await promotion.save();
-    await reschedulePromotionJobs(promotion);
+    await promotion.save({ fields: ["status", "approvedAt", "updatedAt"] });
 
     console.log(
       `🔄 [ADMIN] Promotion ${promotionId} status changed from ${oldStatus} to ${status}`,
@@ -795,7 +747,7 @@ const changePromotionStatus = async (req, res) => {
   }
 };
 
-// Run a promotion: set this promotion active and set all other promotions for the same business inactive
+// Run a promotion: set only this promotion active without changing schedule or sibling promotions
 const runPromotion = async (req, res) => {
   const { promotionId } = req.params;
   try {
@@ -810,52 +762,13 @@ const runPromotion = async (req, res) => {
       });
     }
 
-    if (promotion.scheduleEnabled) {
-      const now = new Date();
-      const startAt = promotion.scheduleStartAt
-        ? new Date(promotion.scheduleStartAt)
-        : null;
-      const endAt = promotion.scheduleEndAt
-        ? new Date(promotion.scheduleEndAt)
-        : null;
-
-      if (endAt && now >= endAt) {
-        promotion.status = "expired";
-        await promotion.save({ fields: ["status", "updatedAt"] });
-        await reschedulePromotionJobs(promotion);
-        return res.status(400).json({
-          message:
-            "Cannot activate this promotion because its scheduled end time has passed.",
-        });
-      }
-
-      if (startAt && now < startAt) {
-        return res.status(400).json({
-          message:
-            "This promotion has scheduling enabled and a future start time. It will auto-activate on schedule.",
-        });
-      }
-    }
-
-    await Promotion.update(
-      { status: "inactive" },
-      {
-        where: {
-          businessId: promotion.businessId,
-          status: "active",
-          id: { [Op.ne]: promotion.id },
-        },
-      },
-    );
-
     promotion.status = "active";
     promotion.approvedAt = promotion.approvedAt || new Date();
-    await promotion.save();
-    await reschedulePromotionJobs(promotion);
+    await promotion.save({ fields: ["status", "approvedAt", "updatedAt"] });
 
     console.log(`✅ [ADMIN] Promotion ${promotionId} is now active`);
     res.json({
-      message: "Promotion activated for business",
+      message: "Promotion activated",
       promotion: normalizePromotionForFrontend(
         (await getPromotionWithRelations(promotion.id)) || promotion,
       ),
@@ -892,42 +805,63 @@ const updatePromotion = async (req, res) => {
     if (!promotion)
       return res.status(404).json({ message: "Promotion not found" });
 
+    const hasField = (field) =>
+      Object.prototype.hasOwnProperty.call(req.body, field);
+
     const {
       templateId,
       imageUrl,
       text,
       backgroundColor,
-      cities = [],
-      states = [],
-      timezones = [],
+      cities,
+      states,
+      timezones,
       runDate,
       stopDate,
       runTime,
       metadata,
       stopTime,
-      categories = [],
+      categories,
       scheduleEnabled,
       scheduleTimezone,
+      scheduleStartAt,
+      scheduleEndAt,
+      businessId,
     } = req.body;
     const normalizedTemplateId = normalizeTemplateId(templateId);
 
-    const targetBusinessId = promotion.businessId || req.body.businessId || null;
+    const targetBusinessId = hasField("businessId")
+      ? businessId || null
+      : promotion.businessId;
+    const hasScheduleUpdate =
+      hasField("businessId") ||
+      hasField("runDate") ||
+      hasField("stopDate") ||
+      hasField("runTime") ||
+      hasField("stopTime") ||
+      hasField("scheduleEnabled") ||
+      hasField("scheduleTimezone") ||
+      hasField("scheduleStartAt") ||
+      hasField("scheduleEndAt");
 
-    const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
-    const nextStopDate = stopDate !== undefined ? stopDate : promotion.stopDate;
-    const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
-    const nextStopTime = stopTime !== undefined ? stopTime : promotion.stopTime;
+    let schedulePayload = null;
+    let isScheduleEnabled = Boolean(promotion.scheduleEnabled);
+    let responseScheduleTimezone = promotion.scheduleTimezone;
 
-    if (!nextRunDate || !nextStopDate || !nextRunTime || !nextStopTime) {
-      return res
-        .status(400)
-        .json({ message: "Missing schedule or time fields" });
-    }
+    if (hasScheduleUpdate && targetBusinessId) {
+      const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
+      const nextStopDate =
+        stopDate !== undefined ? stopDate : promotion.stopDate;
+      const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
+      const nextStopTime =
+        stopTime !== undefined ? stopTime : promotion.stopTime;
 
-    let schedulePayload;
-    let isScheduleEnabled = false;
+      if (!nextRunDate || !nextStopDate || !nextRunTime || !nextStopTime) {
+        return res
+          .status(400)
+          .json({ message: "Missing schedule or time fields" });
+      }
 
-    if (targetBusinessId) {
       const business = await Business.findByPk(targetBusinessId, {
         attributes: ["id", "timezone"],
       });
@@ -943,15 +877,6 @@ const updatePromotion = async (req, res) => {
         ownerTimezone: business.timezone,
         actorTimezone: req.user?.timezone || getRequestTimezone(req),
       });
-      await persistActorTimezone(
-        req.user,
-        resolvedTimezone,
-        scheduleTimezone || getRequestTimezone(req),
-      );
-      if (scheduleTimezone && business.timezone !== resolvedTimezone) {
-        business.timezone = resolvedTimezone;
-        await business.save({ fields: ["timezone", "updatedAt"] });
-      }
 
       schedulePayload = buildSchedulePayload({
         runDate: nextRunDate,
@@ -959,6 +884,12 @@ const updatePromotion = async (req, res) => {
         runTime: nextRunTime,
         stopTime: nextStopTime,
         scheduleTimezone: resolvedTimezone,
+        scheduleStartAt:
+          scheduleStartAt !== undefined
+            ? scheduleStartAt
+            : promotion.scheduleStartAt,
+        scheduleEndAt:
+          scheduleEndAt !== undefined ? scheduleEndAt : promotion.scheduleEndAt,
       });
 
       if (!schedulePayload) {
@@ -972,6 +903,7 @@ const updatePromotion = async (req, res) => {
         scheduleEnabled !== undefined
           ? parseBoolean(scheduleEnabled, promotion.scheduleEnabled)
           : Boolean(promotion.scheduleEnabled);
+      responseScheduleTimezone = schedulePayload.scheduleTimezone;
 
       if (isScheduleEnabled) {
         ensureValidScheduleWindow(schedulePayload);
@@ -982,13 +914,35 @@ const updatePromotion = async (req, res) => {
           excludePromotionId: promotion.id,
         });
       }
-    } else {
+    } else if (hasScheduleUpdate) {
+      const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
+      const nextStopDate =
+        stopDate !== undefined ? stopDate : promotion.stopDate;
+      const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
+      const nextStopTime =
+        stopTime !== undefined ? stopTime : promotion.stopTime;
+
+      if (!nextRunDate || !nextStopDate || !nextRunTime || !nextStopTime) {
+        return res
+          .status(400)
+          .json({ message: "Missing schedule or time fields" });
+      }
+
       schedulePayload = buildSchedulePayload({
         runDate: nextRunDate,
         stopDate: nextStopDate,
         runTime: nextRunTime,
         stopTime: nextStopTime,
-        scheduleTimezone: promotion.scheduleTimezone || "UTC",
+        scheduleTimezone:
+          scheduleTimezone !== undefined
+            ? scheduleTimezone
+            : promotion.scheduleTimezone || "UTC",
+        scheduleStartAt:
+          scheduleStartAt !== undefined
+            ? scheduleStartAt
+            : promotion.scheduleStartAt,
+        scheduleEndAt:
+          scheduleEndAt !== undefined ? scheduleEndAt : promotion.scheduleEndAt,
       });
 
       if (!schedulePayload) {
@@ -998,60 +952,84 @@ const updatePromotion = async (req, res) => {
         });
       }
 
-      isScheduleEnabled = false;
+      isScheduleEnabled =
+        scheduleEnabled !== undefined
+          ? parseBoolean(scheduleEnabled, promotion.scheduleEnabled)
+          : false;
+      responseScheduleTimezone = schedulePayload.scheduleTimezone;
     }
 
     if (templateId !== undefined) {
       promotion.templateId = normalizedTemplateId;
     }
-    promotion.businessId = targetBusinessId;
-    promotion.imageUrl = imageUrl || promotion.imageUrl;
-    promotion.text = Array.isArray(text)
-      ? text
-      : text
-        ? [text]
-        : promotion.text;
-    promotion.backgroundColor =
-      backgroundColor !== undefined
-        ? backgroundColor
-        : promotion.backgroundColor;
-    promotion.cities = cities;
-    promotion.states = states;
-    promotion.timezones = timezones;
-    promotion.runDate = schedulePayload.runDate;
-    promotion.stopDate = schedulePayload.stopDate;
-    promotion.runTime = schedulePayload.runTime;
-    promotion.stopTime = schedulePayload.stopTime;
-    promotion.scheduleEnabled = isScheduleEnabled;
-    promotion.scheduleTimezone = schedulePayload.scheduleTimezone;
-    promotion.scheduleStartAt = isScheduleEnabled
-      ? schedulePayload.scheduleStartAt
-      : null;
-    promotion.scheduleEndAt = isScheduleEnabled
-      ? schedulePayload.scheduleEndAt
-      : null;
-    promotion.calculatedMonths = calculateDurationMonths(
-      schedulePayload.runDate,
-      schedulePayload.stopDate,
-    );
-    promotion.categories = categories;
-    promotion.metadata =
-      metadata && typeof metadata === "object" ? metadata : promotion.metadata;
-    await promotion.save();
-    await reschedulePromotionJobs(promotion);
-
-    try {
-      await syncPromotionLocations({
-        promotionId: promotion.id,
-        cities: promotion.cities || [],
-        states: promotion.states || [],
-        timezones: promotion.timezones || [],
-      });
-    } catch (locationError) {
-      console.warn(
-        "PromotionLocations sync warning (admin update):",
-        locationError.message,
+    if (hasField("businessId")) {
+      promotion.businessId = targetBusinessId;
+    }
+    if (hasField("imageUrl")) {
+      promotion.imageUrl = imageUrl;
+    }
+    if (hasField("text")) {
+      promotion.text = Array.isArray(text)
+        ? text
+        : text === null || text === ""
+          ? []
+          : [text];
+    }
+    if (hasField("backgroundColor")) {
+      promotion.backgroundColor = backgroundColor;
+    }
+    if (hasField("cities")) {
+      promotion.cities = Array.isArray(cities) ? cities : [];
+    }
+    if (hasField("states")) {
+      promotion.states = Array.isArray(states) ? states : [];
+    }
+    if (hasField("timezones")) {
+      promotion.timezones = Array.isArray(timezones) ? timezones : [];
+    }
+    if (schedulePayload) {
+      promotion.runDate = schedulePayload.runDate;
+      promotion.stopDate = schedulePayload.stopDate;
+      promotion.runTime = schedulePayload.runTime;
+      promotion.stopTime = schedulePayload.stopTime;
+      promotion.scheduleEnabled = isScheduleEnabled;
+      promotion.scheduleTimezone = schedulePayload.scheduleTimezone;
+      promotion.scheduleStartAt = isScheduleEnabled
+        ? schedulePayload.scheduleStartAt
+        : null;
+      promotion.scheduleEndAt = isScheduleEnabled
+        ? schedulePayload.scheduleEndAt
+        : null;
+      promotion.calculatedMonths = calculateDurationMonths(
+        schedulePayload.runDate,
+        schedulePayload.stopDate,
       );
+    }
+    if (hasField("categories")) {
+      promotion.categories = Array.isArray(categories) ? categories : [];
+    }
+    if (hasField("metadata") && metadata && typeof metadata === "object") {
+      promotion.metadata = metadata;
+    }
+    await promotion.save();
+    if (schedulePayload) {
+      await reschedulePromotionJobs(promotion);
+    }
+
+    if (hasField("cities") || hasField("states") || hasField("timezones")) {
+      try {
+        await syncPromotionLocations({
+          promotionId: promotion.id,
+          cities: promotion.cities || [],
+          states: promotion.states || [],
+          timezones: promotion.timezones || [],
+        });
+      } catch (locationError) {
+        console.warn(
+          "PromotionLocations sync warning (admin update):",
+          locationError.message,
+        );
+      }
     }
 
     const updatedPromotion = await getPromotionWithRelations(promotion.id);
@@ -1060,7 +1038,7 @@ const updatePromotion = async (req, res) => {
     res.json({
       message: "Promotion updated",
       promotion: normalizePromotionForFrontend(updatedPromotion || promotion),
-      scheduleTimezone: schedulePayload.scheduleTimezone,
+      scheduleTimezone: responseScheduleTimezone,
     });
   } catch (error) {
     console.error("Error updating promotion:", error);
@@ -1145,8 +1123,6 @@ const createPromotionForBusiness = async (req, res) => {
       paymentStatus: "completed",
       approvedAt: new Date(),
     });
-    await reschedulePromotionJobs(promotion);
-
     try {
       await syncPromotionLocations({
         promotionId: promotion.id,
