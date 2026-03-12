@@ -23,6 +23,11 @@ const {
   getUserPermissions,
 } = require("../controllers/adminController");
 
+const {
+  listSupportMessages,
+  exportSupportMessagesCsv,
+} = require("../controllers/supportAdminController");
+
 const { protect } = require("../middleware/authMiddleware");
 const { checkPermission } = require("../middleware/roleMiddleware");
 
@@ -47,6 +52,18 @@ router.get(
   "/dashboard",
   checkPermission("dashboard", "view"),
   getAdminDashboard,
+);
+
+// ---------------- SUPPORT MESSAGES ----------------
+router.get(
+  "/support-messages",
+  checkPermission("support_messages", "view"),
+  listSupportMessages,
+);
+router.get(
+  "/support-messages/export",
+  checkPermission("support_messages", "export"),
+  exportSupportMessagesCsv,
 );
 
 // ---------------- USERS ----------------

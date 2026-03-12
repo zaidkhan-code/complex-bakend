@@ -5,6 +5,8 @@ module.exports = {
 
   users: ["view", "edit", "block"],
 
+  support_messages: ["view", "export"],
+
   businesses: [
     "view",
     "edit",

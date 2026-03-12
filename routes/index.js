@@ -12,6 +12,7 @@ const subscriptionRoutes = require("./subscriptionRoutes");
 const subscriptionsTemplateRoutes = require("./subscriptionsTemplateRoutes");
 const roleRoutes = require("./roleRoutes");
 const wishlistRoutes = require("./wishlistRoutes");
+const supportRoutes = require("./supportRoutes");
 
 // Import models
 const Business = require("../models/Business");
@@ -141,6 +142,7 @@ const setupRoutes = (app) => {
   app.use("/api/subscription", subscriptionRoutes);
   app.use("/api/subscription-template", subscriptionsTemplateRoutes);
   app.use("/api/wishlist", wishlistRoutes);
+  app.use("/api/support", supportRoutes);
   app.get("/api/locationtest", async (req, res) => {
     try {
       const ip =
@@ -179,4 +181,5 @@ module.exports = {
   paymentRoutes,
   roleRoutes,
   wishlistRoutes,
+  supportRoutes,
 };
