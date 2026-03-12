@@ -4,7 +4,7 @@ const hasResendConfig = () => Boolean(process.env.RESEND_API_KEY);
 
 const DEFAULT_FROM = "Complisk <noreply@complisk.com>";
 const LOGO_URL =
-  "https://complisk.com/Complisk logo 2025-12-25 at 1,00,05 PM-Picsart-BackgroundRemover (1).png";
+  "https://complisk.com/Complisk%20logo%202025-12-25%20at%201,00,05%E2%80%AFPM-Picsart-BackgroundRemover%20(1).png";
 
 let cachedResend = null;
 
