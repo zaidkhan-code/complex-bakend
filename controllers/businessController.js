@@ -3,6 +3,7 @@ const Business = require("../models/Business");
 const PromotionLocation = require("../models/PromotionLocation");
 const stripe = require("../config/stripe");
 const { Op } = require("sequelize");
+const { sequelize } = require("../config/db");
 const {
   syncPromotionLocations,
   getPromotionLocationAttributes,
@@ -776,6 +777,31 @@ const getDashboard = async (req, res) => {
       where: { businessId, status: "active" },
     });
 
+    let taggingStats = { totalTaggings: 0, userTaggers: 0, businessTaggers: 0 };
+    const placeId = req.business.placeId ? String(req.business.placeId) : "";
+    if (placeId) {
+      const [row] = await sequelize.query(
+        `
+SELECT
+  COUNT(*)::int AS "totalTaggings",
+  COUNT(DISTINCT "taggerUserId")::int AS "userTaggers",
+  COUNT(DISTINCT "taggerBusinessId")::int AS "businessTaggers"
+FROM "BusinessTaggings"
+WHERE "targetPlaceId" = :placeId;
+`,
+        {
+          replacements: { placeId },
+          type: sequelize.Sequelize.QueryTypes.SELECT,
+        },
+      );
+
+      taggingStats = {
+        totalTaggings: row?.totalTaggings || 0,
+        userTaggers: row?.userTaggers || 0,
+        businessTaggers: row?.businessTaggers || 0,
+      };
+    }
+
     let momentumScore = clamp(Math.floor((totalPromotions / 25) * 100), 100);
     let momentumLevel = "Low";
     if (momentumScore >= 70) momentumLevel = "High";
@@ -783,7 +809,11 @@ const getDashboard = async (req, res) => {
 
     res.json({
       response: {
-        stats: { totalPromotions, activePromotions },
+        stats: {
+          totalPromotions,
+          activePromotions,
+          taggedByUsers: taggingStats.userTaggers,
+        },
         chartData: {
           weekly: weeklyCount,
           monthly: monthlyCount,

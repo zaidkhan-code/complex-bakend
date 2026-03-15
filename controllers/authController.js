@@ -2,6 +2,23 @@ const User = require("../models/User");
 const Business = require("../models/Business");
 const { generateToken } = require("../middleware/authMiddleware");
 const Role = require("../models/Role");
+const { sequelize } = require("../config/db");
+
+const parseLatLng = ({ lat, lng }) => {
+  const numLat = Number(lat);
+  const numLng = Number(lng);
+
+  if (Number.isFinite(numLat) && Number.isFinite(numLng)) {
+    return { lat: numLat, lng: numLng };
+  }
+
+  return { lat: null, lng: null };
+};
+
+const buildGeoPoint = ({ lat, lng }) => {
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return null;
+  return { type: "Point", coordinates: [Number(lng), Number(lat)] };
+};
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -53,6 +70,9 @@ const registerBusiness = async (req, res) => {
       businessType,
       personName,
       businessAddress,
+      placeId,
+      lat,
+      lng,
       timezone,
     } = req.body;
     console.log(
@@ -74,6 +94,8 @@ const registerBusiness = async (req, res) => {
       });
     }
 
+    const parsedCoords = parseLatLng({ lat, lng });
+
     // Create business with all fields
     const business = await Business.create({
       name,
@@ -84,6 +106,10 @@ const registerBusiness = async (req, res) => {
       businessType: businessType || "small",
       personName: personName || null,
       businessAddress: businessAddress || null,
+      placeId: placeId || null,
+      lat: parsedCoords.lat,
+      lng: parsedCoords.lng,
+      coordinates: buildGeoPoint(parsedCoords),
       autoApprovePromotions: false, // Default: admin must approve
       timezone: timezone || "UTC",
     });
@@ -93,6 +119,28 @@ const registerBusiness = async (req, res) => {
     );
 
     if (business) {
+      // Ensure PostGIS geography is persisted even if the ORM shape isn't accepted by the DB/runtime.
+      if (
+        Number.isFinite(Number(parsedCoords.lat)) &&
+        Number.isFinite(Number(parsedCoords.lng))
+      ) {
+        try {
+          await sequelize.query(
+            'UPDATE "Businesses" SET "coordinates" = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id;',
+            {
+              replacements: {
+                id: business.id,
+                lat: Number(parsedCoords.lat),
+                lng: Number(parsedCoords.lng),
+              },
+              type: sequelize.Sequelize.QueryTypes.UPDATE,
+            },
+          );
+        } catch (e) {
+          // Don't fail registration if PostGIS/column isn't ready yet.
+        }
+      }
+
       const responseData = {
         ...business?.dataValues,
         token: generateToken(business.id, "business"),

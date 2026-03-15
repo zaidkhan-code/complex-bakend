@@ -28,6 +28,11 @@ const {
   exportSupportMessagesCsv,
 } = require("../controllers/supportAdminController");
 
+const {
+  listBusinessTaggersForAdmin,
+  listBusinessTaggingsForAdmin,
+} = require("../controllers/businessTaggingAdminController");
+
 const { protect } = require("../middleware/authMiddleware");
 const { checkPermission } = require("../middleware/roleMiddleware");
 
@@ -181,6 +186,19 @@ router.get(
   "/user-permissions/:userId",
   checkPermission("roles", "view"),
   getUserPermissions,
+);
+
+// ---------------- BUSINESS TAGGING ----------------
+router.get(
+  "/business-tagging/taggers",
+  checkPermission("business_tagging", "view"),
+  listBusinessTaggersForAdmin,
+);
+
+router.get(
+  "/business-tagging/taggings",
+  checkPermission("business_tagging", "view"),
+  listBusinessTaggingsForAdmin,
 );
 
 module.exports = router;

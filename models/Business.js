@@ -50,6 +50,26 @@ const Business = sequelize.define(
       allowNull: true,
       comment: "Full business address",
     },
+    placeId: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      comment: "Google Places place_id for matching business taggings",
+    },
+    lat: {
+      type: DataTypes.DOUBLE,
+      allowNull: true,
+      comment: "Latitude from Google Places business match",
+    },
+    lng: {
+      type: DataTypes.DOUBLE,
+      allowNull: true,
+      comment: "Longitude from Google Places business match",
+    },
+    coordinates: {
+      type: DataTypes.GEOGRAPHY("POINT", 4326),
+      allowNull: true,
+      comment: "PostGIS geography point for radius queries (lon/lat)",
+    },
     state: {
       type: DataTypes.STRING,
     },
@@ -83,6 +103,11 @@ const Business = sequelize.define(
       {
         name: "idx_businesses_status_created",
         fields: ["status", "createdAt"],
+      },
+      {
+        name: "idx_businesses_coordinates_gist",
+        using: "gist",
+        fields: ["coordinates"],
       },
       {
         name: "idx_businesses_auto_approve",

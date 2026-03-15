@@ -33,14 +33,12 @@ const initMigrationsTable = async () => {
       },
       { timestamps: false },
     );
-    console.log("✅ Migration tracking table created");
+    console.log("âœ… Migration tracking table created");
   } catch (error) {
     if (error.name === "SequelizeUniqueConstraintError") {
-      // Table already exists
       return;
     }
     if (error.message.includes("already exists")) {
-      // Table already exists
       return;
     }
     throw error;
@@ -105,7 +103,7 @@ const getMigrationFiles = () => {
 const runMigrations = async () => {
   try {
     await sequelize.authenticate();
-    console.log("✅ Database connected");
+    console.log("âœ… Database connected");
 
     await initMigrationsTable();
 
@@ -116,36 +114,36 @@ const runMigrations = async () => {
     );
 
     if (pendingMigrations.length === 0) {
-      console.log("✅ All migrations are up to date");
+      console.log("âœ… All migrations are up to date");
       return;
     }
 
     console.log(
-      `\n📋 Found ${pendingMigrations.length} pending migration(s):\n`,
+      `\nðŸ“‹ Found ${pendingMigrations.length} pending migration(s):\n`,
     );
 
     for (const migration of pendingMigrations) {
       try {
-        console.log(`▶️  Running migration: ${migration}`);
+        console.log(`â–¶ï¸  Running migration: ${migration}`);
         const migrationModule = require(path.join(migrationsFolder, migration));
 
         if (typeof migrationModule.up === "function") {
           const queryInterface = sequelize.getQueryInterface();
           await migrationModule.up(queryInterface, sequelize.Sequelize);
           await recordMigration(migration);
-          console.log(`✅ Migration complete: ${migration}\n`);
+          console.log(`âœ… Migration complete: ${migration}\n`);
         } else {
-          console.error(`❌ Migration ${migration} has no up function`);
+          console.error(`âŒ Migration ${migration} has no up function`);
         }
       } catch (error) {
-        console.error(`❌ Error running migration ${migration}:`, error);
+        console.error(`âŒ Error running migration ${migration}:`, error);
         throw error;
       }
     }
 
-    console.log("🎉 All migrations completed successfully!");
+    console.log("ðŸŽ‰ All migrations completed successfully!");
   } catch (error) {
-    console.error("❌ Migration failed:", error);
+    console.error("âŒ Migration failed:", error);
     process.exit(1);
   } finally {
     await sequelize.close();
@@ -158,38 +156,39 @@ const runMigrations = async () => {
 const rollbackMigration = async () => {
   try {
     await sequelize.authenticate();
-    console.log("✅ Database connected");
+    console.log("âœ… Database connected");
 
     await initMigrationsTable();
 
     const executedMigrations = await getExecutedMigrations();
 
     if (executedMigrations.length === 0) {
-      console.log("ℹ️  No migrations to rollback");
+      console.log("â„¹ï¸  No migrations to rollback");
       return;
     }
 
     const lastMigration = executedMigrations[executedMigrations.length - 1];
 
     try {
-      console.log(`▶️  Rolling back migration: ${lastMigration}`);
+      console.log(`â–¶ï¸  Rolling back migration: ${lastMigration}`);
       const migrationModule = require(
         path.join(migrationsFolder, lastMigration),
       );
 
       if (typeof migrationModule.down === "function") {
-        await migrationModule.down(sequelize);
+        const queryInterface = sequelize.getQueryInterface();
+        await migrationModule.down(queryInterface, sequelize.Sequelize);
         await removeMigration(lastMigration);
-        console.log(`✅ Rollback complete: ${lastMigration}`);
+        console.log(`âœ… Rollback complete: ${lastMigration}`);
       } else {
-        console.error(`❌ Migration ${lastMigration} has no down function`);
+        console.error(`âŒ Migration ${lastMigration} has no down function`);
       }
     } catch (error) {
-      console.error(`❌ Error rolling back migration ${lastMigration}:`, error);
+      console.error(`âŒ Error rolling back migration ${lastMigration}:`, error);
       throw error;
     }
   } catch (error) {
-    console.error("❌ Rollback failed:", error);
+    console.error("âŒ Rollback failed:", error);
     process.exit(1);
   } finally {
     await sequelize.close();
@@ -202,20 +201,20 @@ const rollbackMigration = async () => {
 const showStatus = async () => {
   try {
     await sequelize.authenticate();
-    console.log("✅ Database connected\n");
+    console.log("âœ… Database connected\n");
 
     await initMigrationsTable();
 
     const executedMigrations = await getExecutedMigrations();
     const allMigrations = getMigrationFiles();
 
-    console.log("📊 Migration Status:\n");
+    console.log("ðŸ“Š Migration Status:\n");
     console.log("Executed Migrations:");
     if (executedMigrations.length === 0) {
       console.log("  (none)");
     } else {
       executedMigrations.forEach((m) => {
-        console.log(`  ✅ ${m}`);
+        console.log(`  âœ… ${m}`);
       });
     }
 
@@ -227,11 +226,11 @@ const showStatus = async () => {
       console.log("  (none)");
     } else {
       pendingMigrations.forEach((m) => {
-        console.log(`  ⏳ ${m}`);
+        console.log(`  â³ ${m}`);
       });
     }
   } catch (error) {
-    console.error("❌ Error checking migration status:", error);
+    console.error("âŒ Error checking migration status:", error);
     process.exit(1);
   } finally {
     await sequelize.close();
@@ -266,3 +265,4 @@ if (require.main === module) {
       process.exit(0);
   }
 }
+

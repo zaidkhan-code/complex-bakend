@@ -13,6 +13,7 @@ const subscriptionsTemplateRoutes = require("./subscriptionsTemplateRoutes");
 const roleRoutes = require("./roleRoutes");
 const wishlistRoutes = require("./wishlistRoutes");
 const supportRoutes = require("./supportRoutes");
+const businessTaggingRoutes = require("./businessTaggingRoutes");
 
 // Import models
 const Business = require("../models/Business");
@@ -21,6 +22,7 @@ const Template = require("../models/Template");
 const User = require("../models/User");
 const Role = require("../models/Role");
 const Wishlist = require("../models/Wishlist");
+const BusinessTagging = require("../models/BusinessTagging");
 const { default: axios } = require("axios");
 const SubscriptionHistory = require("../models/SubscriptionHistory");
 const BusinessSubscription = require("../models/BusinessSubscription");
@@ -118,6 +120,27 @@ const setupModelRelationships = () => {
     foreignKey: "promotionId",
     as: "wishlists",
   });
+
+  // Business Tagging Relationships (user/business -> Google Place business)
+  BusinessTagging.belongsTo(User, {
+    foreignKey: "taggerUserId",
+    as: "taggerUser",
+  });
+
+  BusinessTagging.belongsTo(Business, {
+    foreignKey: "taggerBusinessId",
+    as: "taggerBusiness",
+  });
+
+  User.hasMany(BusinessTagging, {
+    foreignKey: "taggerUserId",
+    as: "businessTaggings",
+  });
+
+  Business.hasMany(BusinessTagging, {
+    foreignKey: "taggerBusinessId",
+    as: "businessTaggings",
+  });
 };
 
 /**
@@ -143,6 +166,7 @@ const setupRoutes = (app) => {
   app.use("/api/subscription-template", subscriptionsTemplateRoutes);
   app.use("/api/wishlist", wishlistRoutes);
   app.use("/api/support", supportRoutes);
+  app.use("/api/business-tagging", businessTaggingRoutes);
   app.get("/api/locationtest", async (req, res) => {
     try {
       const ip =
@@ -182,4 +206,5 @@ module.exports = {
   roleRoutes,
   wishlistRoutes,
   supportRoutes,
+  businessTaggingRoutes,
 };
