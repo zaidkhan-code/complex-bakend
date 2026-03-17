@@ -1,9 +1,11 @@
 const User = require("../models/User");
 const Business = require("../models/Business");
+const BusinessSubscription = require("../models/BusinessSubscription");
 const Role = require("../models/Role");
 const Promotion = require("../models/Promotion");
 const PromotionLocation = require("../models/PromotionLocation");
 const Template = require("../models/Template");
+const SubscriptionTemplate = require("../models/SubscriptionTemplate");
 const { Op } = require("sequelize");
 const { uploadImageToCloudinary } = require("../utils/cloudinaryUtils");
 const {
@@ -313,8 +315,56 @@ const getAllBusinesses = async (req, res) => {
       offset: parseInt(offset),
     });
 
+    const businessIds = businesses.map((row) => row.id).filter(Boolean);
+    const activeSubscriptionByBusinessId = new Map();
+
+    if (businessIds.length) {
+      const now = new Date();
+      const activeSubscriptions = await BusinessSubscription.findAll({
+        where: {
+          businessId: { [Op.in]: businessIds },
+          status: "active",
+        },
+        include: [
+          {
+            model: SubscriptionTemplate,
+            as: "template",
+          },
+        ],
+        order: [["endDate", "DESC"]],
+      });
+
+      const expiredIds = [];
+      for (const sub of activeSubscriptions) {
+        const endDate = sub?.endDate ? new Date(sub.endDate) : null;
+        const isExpired = endDate && !Number.isNaN(endDate.getTime()) && endDate < now;
+        if (isExpired) {
+          expiredIds.push(sub.id);
+          continue;
+        }
+
+        if (!activeSubscriptionByBusinessId.has(sub.businessId)) {
+          activeSubscriptionByBusinessId.set(sub.businessId, sub);
+        }
+      }
+
+      if (expiredIds.length) {
+        await BusinessSubscription.update(
+          { status: "expired" },
+          { where: { id: { [Op.in]: expiredIds } } },
+        );
+      }
+    }
+
     res.json({
-      businesses,
+      businesses: businesses.map((row) => {
+        const plain = row?.toJSON ? row.toJSON() : row;
+        const sub = activeSubscriptionByBusinessId.get(row.id);
+        return {
+          ...plain,
+          activeSubscription: sub ? (sub.toJSON ? sub.toJSON() : sub) : null,
+        };
+      }),
       pagination: {
         total: count,
         pages: Math.ceil(count / limit),
@@ -324,6 +374,112 @@ const getAllBusinesses = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Add or extend a business subscription (admin, free)
+// @route   POST /api/admin/businesses/:id/subscription
+// @access  Private (Admin)
+const grantBusinessSubscription = async (req, res) => {
+  try {
+    const businessId = req.params.id;
+    const { templateId, extendMonths } = req.body || {};
+
+    const business = await Business.findByPk(businessId);
+    if (!business) {
+      return res.status(404).json({ message: "Business not found" });
+    }
+
+    const now = new Date();
+    const existingActive = await BusinessSubscription.findOne({
+      where: {
+        businessId,
+        status: "active",
+      },
+      order: [["endDate", "DESC"]],
+    });
+
+    const currentEnd = existingActive?.endDate
+      ? new Date(existingActive.endDate)
+      : null;
+    const existingEndIsValid =
+      currentEnd && !Number.isNaN(currentEnd.getTime()) && currentEnd > now;
+
+    // If an "active" record is actually expired, mark it expired and treat as no subscription.
+    if (existingActive && !existingEndIsValid) {
+      existingActive.status = "expired";
+      await existingActive.save({ fields: ["status", "updatedAt"] });
+    }
+
+    let subscription = null;
+
+    // ✅ Extend existing subscription by only updating its endDate.
+    if (existingActive && existingEndIsValid) {
+      const monthsToExtend = Number(extendMonths);
+      if (!Number.isFinite(monthsToExtend) || monthsToExtend <= 0) {
+        return res.status(400).json({
+          message: "extendMonths is required (positive number) to extend",
+        });
+      }
+
+      const newEnd = new Date(currentEnd);
+      newEnd.setMonth(newEnd.getMonth() + monthsToExtend);
+
+      existingActive.endDate = newEnd;
+      await existingActive.save({ fields: ["endDate", "updatedAt"] });
+      subscription = existingActive;
+    } else {
+      // ✅ No active subscription: create a new one from template dropdown.
+      if (!templateId) {
+        return res.status(400).json({ message: "templateId is required" });
+      }
+
+      const template = await SubscriptionTemplate.findByPk(templateId);
+      if (!template || template.isActive === false) {
+        return res.status(404).json({ message: "Invalid subscription plan" });
+      }
+
+      await BusinessSubscription.update(
+        { status: "expired" },
+        { where: { businessId, status: "active" } },
+      );
+
+      const endDate = new Date(now);
+      endDate.setMonth(
+        endDate.getMonth() + Number(template.durationMonths || 0),
+      );
+
+      subscription = await BusinessSubscription.create({
+        businessId,
+        subscriptionTemplateId: template.id,
+        startDate: now,
+        endDate,
+        freeCities: template.freeCities,
+        freeStates: template.freeStates,
+        freeTimezones: template.freeTimezones,
+        stripeSubscriptionId: null,
+        status: "active",
+      });
+    }
+
+    const hydrated = await BusinessSubscription.findByPk(subscription.id, {
+      include: [
+        {
+          model: SubscriptionTemplate,
+          as: "template",
+        },
+      ],
+    });
+
+   
+
+    res.json({
+      message: "Subscription updated successfully",
+      subscription: hydrated || subscription,
+    });
+  } catch (error) {
+    console.error("Error granting subscription:", error);
+    res.status(500).json({ message: error.message || "Server error" });
   }
 };
 
@@ -1364,6 +1520,7 @@ module.exports = {
   makeAdmin,
   toggleBusinessAutoApprove,
   getAllBusinesses,
+  grantBusinessSubscription,
   approvePromotion,
   updateBusinessStatus,
   getAllPromotions,

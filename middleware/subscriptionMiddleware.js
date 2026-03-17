@@ -1,27 +1,14 @@
 const BusinessSubscription = require("../models/BusinessSubscription");
+const {
+  getValidActiveSubscription,
+} = require("../utils/businessSubscriptionUtils");
 
 const requireActiveSubscription = async (req, res, next) => {
   try {
-    const subscription = await BusinessSubscription.findOne({
-      where: {
-        businessId: req.business.id,
-        status: "active",
-      },
-    });
-
+    const subscription = await getValidActiveSubscription(req.business.id);
     if (!subscription) {
       return res.status(403).json({
         message: "Active subscription required",
-      });
-    }
-
-    // Extra safety: expiry check
-    if (new Date(subscription.endDate) < new Date()) {
-      subscription.status = "expired";
-      await subscription.save();
-
-      return res.status(403).json({
-        message: "Your subscription has expired",
       });
     }
 

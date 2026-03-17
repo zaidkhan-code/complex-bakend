@@ -2,6 +2,9 @@ const BusinessSubscription = require("../models/BusinessSubscription");
 const SubscriptionTemplate = require("../models/SubscriptionTemplate");
 const stripe = require("../config/stripe");
 const Business = require("../models/Business");
+const {
+  getValidActiveSubscription,
+} = require("../utils/businessSubscriptionUtils");
 const createSubscriptionCheckout = async (req, res) => {
   const { templateId } = req.body;
   const business = await Business.findByPk(req.business.id);
@@ -48,21 +51,11 @@ const createSubscriptionCheckout = async (req, res) => {
 
 const getActiveSubscription = async (req, res) => {
   try {
-    const subscription = await BusinessSubscription.findOne({
-      where: {
-        businessId: req.business.id,
-        status: "active",
-      },
-      include: [
-        {
-          model: SubscriptionTemplate,
-          as: "template", // <- must match the alias in the association
-        },
-      ],
-      order: [["endDate", "DESC"]],
+    const subscription = await getValidActiveSubscription(req.business.id, {
+      includeTemplate: true,
     });
 
-    res.json(subscription || null);
+    res.json(subscription);
   } catch (error) {
     console.error("Error fetching active subscription:", error);
     res.status(500).json({ message: "Server error" });

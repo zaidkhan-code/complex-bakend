@@ -3,7 +3,11 @@ const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
-const { reschedulePromotionJobs } = require("../services/promotionScheduler");
+const BusinessSubscription = require("../models/BusinessSubscription");
+const {
+  reschedulePromotionJobs,
+  cancelPromotionJobs,
+} = require("../services/promotionScheduler");
 
 const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
   try {
@@ -14,6 +18,7 @@ const autoApprovePendingPromotions = cron.schedule("*/10 * * * *", async () => {
       where: {
         status: "pending",
         paymentStatus: "completed",
+        autoApprove: false,
         createdAt: { [Op.lte]: twentyFourHoursAgo },
       },
       include: [{ model: Business, as: "business" }],
@@ -55,12 +60,83 @@ const runExpirePromotions = async () => {
 
 const expirePromotions = cron.schedule("*/10 * * * *", runExpirePromotions);
 
+const runExpireBusinessSubscriptions = async () => {
+  try {
+    const now = new Date();
+
+    const [expiredCount, expiredRows] = await BusinessSubscription.update(
+      { status: "expired" },
+      {
+        where: {
+          status: "active",
+          endDate: { [Op.lte]: now },
+        },
+        returning: true,
+      },
+    );
+
+    if (!expiredCount) return;
+
+    const businessIds = Array.from(
+      new Set((expiredRows || []).map((row) => row.businessId).filter(Boolean)),
+    );
+
+    if (!businessIds.length) {
+      console.log(`Expired subscriptions: ${expiredCount}`);
+      return;
+    }
+
+    const [deactivatedPromotions] = await Promotion.update(
+      { status: "inactive" },
+      {
+        where: {
+          businessId: { [Op.in]: businessIds },
+          status: "active",
+        },
+      },
+    );
+
+    const promotionsWithJobs = await Promotion.findAll({
+      where: {
+        businessId: { [Op.in]: businessIds },
+        scheduleEnabled: true,
+        status: { [Op.ne]: "expired" },
+        [Op.or]: [
+          { activationJobId: { [Op.ne]: null } },
+          { expirationJobId: { [Op.ne]: null } },
+        ],
+      },
+    });
+
+    for (const promo of promotionsWithJobs) {
+      await cancelPromotionJobs(promo);
+    }
+
+    console.log(
+      `Expired subscriptions: ${expiredCount}. Deactivated promotions: ${Number(
+        deactivatedPromotions || 0,
+      )}. Cleared scheduled jobs: ${promotionsWithJobs.length}.`,
+    );
+  } catch (error) {
+    console.error("Error in expire business subscriptions cron:", error);
+  }
+};
+
+const expireBusinessSubscriptions = cron.schedule(
+  "*/10 * * * *",
+  runExpireBusinessSubscriptions,
+);
+
 const startCronJobs = () => {
   autoApprovePendingPromotions.start();
   expirePromotions.start();
+  expireBusinessSubscriptions.start();
   // Run once at startup so already-ended promotions are expired immediately.
   runExpirePromotions().catch((error) =>
     console.error("Error running startup expire check:", error),
+  );
+  runExpireBusinessSubscriptions().catch((error) =>
+    console.error("Error running startup subscription expire check:", error),
   );
   console.log("All cron jobs started");
 };
@@ -68,6 +144,7 @@ const startCronJobs = () => {
 const stopCronJobs = () => {
   autoApprovePendingPromotions.stop();
   expirePromotions.stop();
+  expireBusinessSubscriptions.stop();
   console.log("All cron jobs stopped");
 };
 

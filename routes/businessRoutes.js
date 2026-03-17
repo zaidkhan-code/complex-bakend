@@ -21,7 +21,6 @@ router.use(protect("business"));
 router.get("/dashboard", getDashboard);
 router.post(
   "/promotions",
-  requireActiveSubscription,
   validatePromotion,
   createPromotion,
 );

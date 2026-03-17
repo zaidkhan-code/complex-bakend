@@ -3,6 +3,9 @@ const Promotion = require("../models/Promotion");
 const { sequelize } = require("../config/db");
 const { getPgBoss } = require("../config/pgBoss");
 const {
+  getValidActiveSubscription,
+} = require("../utils/businessSubscriptionUtils");
+const {
   getPromotionLifecycleByNow,
 } = require("../utils/promotionScheduleUtils");
 
@@ -83,6 +86,15 @@ const cancelPromotionJobs = async (
 };
 
 const setPromotionActiveNow = async (promotion, now = new Date()) => {
+  const subscription = await getValidActiveSubscription(promotion.businessId);
+  if (!subscription) {
+    if (promotion.status === "active") {
+      promotion.status = "inactive";
+      await promotion.save({ fields: ["status", "updatedAt"] });
+    }
+    return promotion;
+  }
+
   await Promotion.update(
     { status: "inactive" },
     {
@@ -179,6 +191,16 @@ const reschedulePromotionJobs = async (promotionOrId) => {
       : promotionOrId;
 
   if (!promotion) return null;
+
+  const subscription = await getValidActiveSubscription(promotion.businessId);
+  if (!subscription) {
+    await cancelPromotionJobs(promotion);
+    if (promotion.status === "active") {
+      promotion.status = "inactive";
+      await promotion.save({ fields: ["status", "updatedAt"] });
+    }
+    return promotion;
+  }
 
   await cancelPromotionJobs(promotion, { clearFields: false });
 

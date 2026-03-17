@@ -5,6 +5,9 @@ const stripe = require("../config/stripe");
 const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
 const {
+  getValidActiveSubscription,
+} = require("../utils/businessSubscriptionUtils");
+const {
   syncPromotionLocations,
   getPromotionLocationAttributes,
 } = require("../utils/promotionLocationUtils");
@@ -161,6 +164,8 @@ const normalizeTemplateId = (value) => {
 };
 
 const EXTRA_STATE_PRICE = 20;
+const TRIAL_FREE_CITIES = 2;
+const TRIAL_FREE_STATES = 0;
 
 const buildApiErrorPayload = (error, fallbackMessage = "Server error") => ({
   message: error?.message || fallbackMessage,
@@ -284,12 +289,9 @@ const createPromotion = async (req, res) => {
       return res.status(404).json({ message: "Business not found" });
     }
 
-    const subscription = req.activeSubscription;
-    if (!subscription) {
-      return res.status(403).json({
-        message: "Active subscription required",
-      });
-    }
+    const subscription =
+      req.activeSubscription ||
+      (await getValidActiveSubscription(req.business.id));
 
     const {
       templateId,
@@ -335,7 +337,9 @@ const createPromotion = async (req, res) => {
       });
     }
 
-    const isScheduleEnabled = parseBoolean(scheduleEnabled, false);
+    const isScheduleEnabled = subscription
+      ? parseBoolean(scheduleEnabled, false)
+      : false;
     if (isScheduleEnabled) {
       ensureValidScheduleWindow(schedulePayload);
       await ensureNoScheduledOverlap({
@@ -349,7 +353,19 @@ const createPromotion = async (req, res) => {
     const safeCities = normalizeArray(cities);
     const safeTimezones = normalizeArray(timezones);
 
-    const freeStates = Number(subscription.freeStates || 0);
+    const maxCitiesAllowed = subscription
+      ? Math.max(0, Number(subscription.freeCities || 0))
+      : TRIAL_FREE_CITIES;
+
+    if (safeCities.length > maxCitiesAllowed) {
+      return res.status(400).json({
+        message: `Maximum ${maxCitiesAllowed} ${maxCitiesAllowed === 1 ? "city" : "cities"} allowed for your current plan`,
+      });
+    }
+
+    const freeStates = subscription
+      ? Number(subscription.freeStates || 0)
+      : TRIAL_FREE_STATES;
     const extraStates = Math.max(0, safeStates.length - freeStates);
     const stateCost = extraStates > 0 ? extraStates * EXTRA_STATE_PRICE : 0;
     const totalPrice = stateCost;
@@ -841,6 +857,13 @@ WHERE "targetPlaceId" = :placeId;
 const activatePromotion = async (req, res) => {
   try {
     const { promotionId } = req.params;
+
+    const subscription = await getValidActiveSubscription(req.business.id);
+    if (!subscription) {
+      return res.status(403).json({
+        message: "Active subscription required to activate promotions",
+      });
+    }
 
     const promotion = await Promotion.findOne({
       where: { id: promotionId, businessId: req.business.id },

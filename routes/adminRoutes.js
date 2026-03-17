@@ -7,6 +7,7 @@ const {
   getAllBusinesses,
   updateUserStatus,
   updateBusinessStatus,
+  grantBusinessSubscription,
   getAllPromotions,
   deletePromotion,
   changePromotionStatus,
@@ -94,6 +95,12 @@ router.put(
 );
 
 // 🔥 Business auto-approve promotions
+router.post(
+  "/businesses/:id/subscription",
+  checkPermission("businesses", "edit"),
+  grantBusinessSubscription,
+);
+
 router.put(
   "/businesses/:businessId/toggle-auto-approve",
   checkPermission("businesses", "auto_approve"),
