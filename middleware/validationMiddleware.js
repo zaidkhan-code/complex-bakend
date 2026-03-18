@@ -39,7 +39,16 @@ const validateLogin = [
 
 // Promotion creation validation
 const validatePromotion = [
-  body("imageUrl").trim().notEmpty().withMessage("Image URL is required"),
+  body("imageUrl").custom((value, { req }) => {
+    const hasImage = String(value || "").trim().length > 0;
+    const hasBusinessTemplateId =
+      String(req.body?.businessTemplateId || "").trim().length > 0;
+
+    if (!hasImage && !hasBusinessTemplateId) {
+      throw new Error("Image URL is required");
+    }
+    return true;
+  }),
   body("runDate").isISO8601().withMessage("Valid run date is required"),
 
   body("stopDate").isISO8601().withMessage("Valid stop date is required"),

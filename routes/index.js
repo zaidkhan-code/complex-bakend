@@ -28,6 +28,7 @@ const SubscriptionHistory = require("../models/SubscriptionHistory");
 const BusinessSubscription = require("../models/BusinessSubscription");
 const SubscriptionTemplate = require("../models/SubscriptionTemplate");
 const PromotionLocation = require("../models/PromotionLocation");
+const BusinessPromotionTemplate = require("../models/BusinessPromotionTemplate");
 /**
  * Setup all model relationships
  */
@@ -43,8 +44,28 @@ const setupModelRelationships = () => {
     foreignKey: "businessId",
     as: "business",
   });
+
+  Business.hasMany(BusinessPromotionTemplate, {
+    foreignKey: "businessId",
+    as: "promotionTemplates",
+    onDelete: "CASCADE",
+  });
+  BusinessPromotionTemplate.belongsTo(Business, {
+    foreignKey: "businessId",
+    as: "business",
+  });
+
   Template.hasMany(Promotion, { foreignKey: "templateId", as: "promotions" });
   Promotion.belongsTo(Template, { foreignKey: "templateId", as: "template" });
+
+  Template.hasMany(BusinessPromotionTemplate, {
+    foreignKey: "templateId",
+    as: "businessPromotionTemplates",
+  });
+  BusinessPromotionTemplate.belongsTo(Template, {
+    foreignKey: "templateId",
+    as: "template",
+  });
 
   Role.hasMany(User, {
     foreignKey: "roleId",

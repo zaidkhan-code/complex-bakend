@@ -30,6 +30,11 @@ const Business = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    logoUrl: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: "Business profile logo image URL",
+    },
     businessType: {
       type: DataTypes.ENUM("small", "medium", "large", "online-ecommerce"),
       allowNull: false,

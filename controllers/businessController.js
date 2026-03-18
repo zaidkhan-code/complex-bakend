@@ -1,6 +1,7 @@
 const Promotion = require("../models/Promotion");
 const Business = require("../models/Business");
 const PromotionLocation = require("../models/PromotionLocation");
+const BusinessPromotionTemplate = require("../models/BusinessPromotionTemplate");
 const stripe = require("../config/stripe");
 const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
@@ -295,6 +296,7 @@ const createPromotion = async (req, res) => {
 
     const {
       templateId,
+      businessTemplateId,
       imageUrl,
       text,
       backgroundColor,
@@ -313,8 +315,61 @@ const createPromotion = async (req, res) => {
     } = req.body;
 
     const normalizedTemplateId = normalizeTemplateId(templateId);
+    const normalizedBusinessTemplateId = normalizeTemplateId(businessTemplateId);
+    const businessTemplate = normalizedBusinessTemplateId
+      ? await BusinessPromotionTemplate.findOne({
+          where: {
+            id: normalizedBusinessTemplateId,
+            businessId: req.business.id,
+          },
+        })
+      : null;
 
-    if (!imageUrl || !runDate || !stopDate || !runTime || !stopTime) {
+    if (normalizedBusinessTemplateId && !businessTemplate) {
+      return res.status(404).json({ message: "Promotion template not found" });
+    }
+
+    if (normalizedBusinessTemplateId && !subscription) {
+      return res.status(403).json({
+        message: "Active subscription is required before using a promotion template",
+        code: "TEMPLATE_SUBSCRIPTION_REQUIRED",
+      });
+    }
+
+    const normalizedMetadata =
+      metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? metadata
+        : {};
+    const resolvedImageUrl = String(
+      imageUrl || businessTemplate?.imageUrl || "",
+    ).trim();
+    const resolvedText =
+      text !== undefined
+        ? Array.isArray(text)
+          ? text
+          : text
+            ? [text]
+            : []
+        : Array.isArray(businessTemplate?.text)
+          ? businessTemplate.text
+          : [];
+    const resolvedBackgroundColor =
+      backgroundColor !== undefined && backgroundColor !== null
+        ? String(backgroundColor)
+        : businessTemplate?.backgroundColor || "";
+    const resolvedMetadata = {
+      ...(businessTemplate?.metadata &&
+      typeof businessTemplate.metadata === "object" &&
+      !Array.isArray(businessTemplate.metadata)
+        ? businessTemplate.metadata
+        : {}),
+      ...normalizedMetadata,
+      ...(normalizedBusinessTemplateId
+        ? { sourceBusinessTemplateId: normalizedBusinessTemplateId }
+        : {}),
+    };
+
+    if (!resolvedImageUrl || !runDate || !stopDate || !runTime || !stopTime) {
       return res.status(400).json({
         message:
           "Missing required fields: imageUrl, runDate, stopDate, runTime, stopTime",
@@ -373,9 +428,9 @@ const createPromotion = async (req, res) => {
     const promotion = await Promotion.create({
       businessId: business.id,
       templateId: normalizedTemplateId,
-      imageUrl,
-      text: Array.isArray(text) ? text : text ? [text] : [],
-      backgroundColor: backgroundColor || "",
+      imageUrl: resolvedImageUrl,
+      text: resolvedText,
+      backgroundColor: resolvedBackgroundColor,
       categories:
         Array.isArray(categories) && categories.length
           ? categories
@@ -404,7 +459,7 @@ const createPromotion = async (req, res) => {
             : "pending",
       autoApprove: Boolean(business.autoApprovePromotions),
       paymentStatus: totalPrice > 0 ? "pending" : "completed",
-      metadata: metadata && typeof metadata === "object" ? metadata : {},
+      metadata: resolvedMetadata,
     });
 
     await reschedulePromotionJobs(promotion);
