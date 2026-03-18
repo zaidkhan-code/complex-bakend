@@ -23,6 +23,7 @@ const {
   updateBusinessProfile,
 } = require("../controllers/businessProfileController");
 const { protect } = require("../middleware/authMiddleware");
+const { requireActiveSubscription } = require("../middleware/subscriptionMiddleware");
 const { validatePromotion } = require("../middleware/validationMiddleware");
 
 const storage = multer.memoryStorage();
@@ -42,6 +43,7 @@ router.get("/profile", getBusinessProfile);
 router.put("/profile", upload.single("logo"), updateBusinessProfile);
 router.post(
   "/promotions",
+  requireActiveSubscription,
   validatePromotion,
   createPromotion,
 );
