@@ -234,7 +234,261 @@ LIMIT :limit OFFSET :offset;
   }
 };
 
+// @desc    List tagged businesses grouped with user/business tagger counts
+// @route   GET /api/admin/business-tagging/businesses
+// @access  Private (Admin)
+const listTaggedBusinessesForAdmin = async (req, res) => {
+  try {
+    const { page, limit, offset } = parsePageParams(req, {
+      page: 1,
+      limit: 25,
+    });
+
+    const q = req.query.q ? String(req.query.q).trim() : "";
+    const whereParts = [];
+    const replacements = { limit, offset };
+
+    if (q) {
+      whereParts.push(
+        `("targetName" ILIKE :q OR "targetAddress" ILIKE :q OR "targetPlaceId" ILIKE :q)`,
+      );
+      replacements.q = `%${q}%`;
+    }
+
+    const whereSql = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+    const [countRow] = await sequelize.query(
+      `
+SELECT COUNT(DISTINCT "targetPlaceId")::int AS "total"
+FROM "BusinessTaggings"
+${whereSql};
+`,
+      {
+        replacements,
+        type: sequelize.Sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    const totalItems = countRow?.total || 0;
+
+    const rows = await sequelize.query(
+      `
+WITH filtered AS (
+  SELECT *
+  FROM "BusinessTaggings"
+  ${whereSql}
+),
+aggregated AS (
+  SELECT
+    "targetPlaceId",
+    COUNT(*)::int AS "totalTags",
+    COUNT(DISTINCT "taggerUserId")::int AS "taggedByUsers",
+    COUNT(DISTINCT "taggerBusinessId")::int AS "taggedByBusinesses",
+    MAX("createdAt") AS "lastTaggedAt"
+  FROM filtered
+  GROUP BY "targetPlaceId"
+),
+latest AS (
+  SELECT DISTINCT ON (f."targetPlaceId")
+    f."targetPlaceId",
+    f."targetName",
+    f."targetAddress",
+    f."targetIconMaskBaseUri",
+    f."targetIconBackgroundColor",
+    f."targetPrimaryPhotoUrl",
+    f."targetRating",
+    f."targetUserRatingsTotal",
+    f."targetWebsite",
+    f."targetGoogleUrl",
+    f."targetFormattedPhoneNumber",
+    f."targetInternationalPhoneNumber",
+    f."targetEmail",
+    f."targetTypes",
+    f."targetReviews"
+  FROM filtered f
+  ORDER BY f."targetPlaceId", f."createdAt" DESC
+)
+SELECT
+  a."targetPlaceId",
+  a."totalTags",
+  a."taggedByUsers",
+  a."taggedByBusinesses",
+  a."lastTaggedAt",
+  l."targetName",
+  l."targetAddress",
+  l."targetIconMaskBaseUri",
+  l."targetIconBackgroundColor",
+  l."targetPrimaryPhotoUrl",
+  l."targetRating",
+  l."targetUserRatingsTotal",
+  l."targetWebsite",
+  l."targetGoogleUrl",
+  l."targetFormattedPhoneNumber",
+  l."targetInternationalPhoneNumber",
+  l."targetEmail",
+  l."targetTypes",
+  l."targetReviews"
+FROM aggregated a
+LEFT JOIN latest l ON l."targetPlaceId" = a."targetPlaceId"
+ORDER BY a."lastTaggedAt" DESC NULLS LAST
+LIMIT :limit OFFSET :offset;
+`,
+      {
+        replacements,
+        type: sequelize.Sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalItems / limit),
+        totalItems,
+        itemsPerPage: limit,
+      },
+    });
+  } catch (error) {
+    console.error("Admin list tagged businesses error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
+  }
+};
+
+// @desc    List all user/business taggers for a specific tagged business placeId
+// @route   GET /api/admin/business-tagging/business-details
+// @access  Private (Admin)
+const getTaggedBusinessDetailsForAdmin = async (req, res) => {
+  try {
+    const targetPlaceId = req.query.placeId
+      ? String(req.query.placeId).trim()
+      : "";
+
+    if (!targetPlaceId) {
+      return res.status(400).json({
+        success: false,
+        message: "placeId query parameter is required",
+      });
+    }
+
+    const rows = await sequelize.query(
+      `
+SELECT
+  bt.id,
+  bt."targetPlaceId",
+  bt."targetName",
+  bt."targetAddress",
+  bt."targetIconMaskBaseUri",
+  bt."targetIconBackgroundColor",
+  bt."targetPrimaryPhotoUrl",
+  bt."targetRating",
+  bt."targetUserRatingsTotal",
+  bt."targetWebsite",
+  bt."targetGoogleUrl",
+  bt."targetFormattedPhoneNumber",
+  bt."targetInternationalPhoneNumber",
+  bt."targetEmail",
+  bt."targetTypes",
+  bt."targetReviews",
+  bt."taggerUserId",
+  bt."taggerBusinessId",
+  bt."createdAt",
+  u."fullName" AS "userFullName",
+  u.email AS "userEmail",
+  b.name AS "businessName",
+  b.email AS "businessEmail",
+  b.phone AS "businessPhone",
+  b."businessType" AS "businessType",
+  b."businessAddress" AS "businessAddress"
+FROM "BusinessTaggings" bt
+LEFT JOIN "Users" u ON u.id = bt."taggerUserId"
+LEFT JOIN "Businesses" b ON b.id = bt."taggerBusinessId"
+WHERE bt."targetPlaceId" = :targetPlaceId
+ORDER BY bt."createdAt" DESC;
+`,
+      {
+        replacements: { targetPlaceId },
+        type: sequelize.Sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    const users = [];
+    const businesses = [];
+    let target = null;
+
+    for (const row of rows) {
+      if (!target) {
+        target = {
+          targetPlaceId: row.targetPlaceId,
+          targetName: row.targetName,
+          targetAddress: row.targetAddress,
+          targetIconMaskBaseUri: row.targetIconMaskBaseUri,
+          targetIconBackgroundColor: row.targetIconBackgroundColor,
+          targetPrimaryPhotoUrl: row.targetPrimaryPhotoUrl,
+          targetRating: row.targetRating,
+          targetUserRatingsTotal: row.targetUserRatingsTotal,
+          targetWebsite: row.targetWebsite,
+          targetGoogleUrl: row.targetGoogleUrl,
+          targetFormattedPhoneNumber: row.targetFormattedPhoneNumber,
+          targetInternationalPhoneNumber: row.targetInternationalPhoneNumber,
+          targetEmail: row.targetEmail,
+          targetTypes: row.targetTypes,
+          targetReviews: row.targetReviews,
+        };
+      }
+
+      if (row.taggerUserId) {
+        users.push({
+          taggingId: row.id,
+          taggerType: "user",
+          taggerId: row.taggerUserId,
+          fullName: row.userFullName || "Unknown User",
+          email: row.userEmail || null,
+          taggedAt: row.createdAt,
+        });
+      } else if (row.taggerBusinessId) {
+        businesses.push({
+          taggingId: row.id,
+          taggerType: "business",
+          taggerId: row.taggerBusinessId,
+          name: row.businessName || "Unknown Business",
+          email: row.businessEmail || null,
+          phone: row.businessPhone || null,
+          businessType: row.businessType || null,
+          businessAddress: row.businessAddress || null,
+          taggedAt: row.createdAt,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        target,
+        userTaggers: users,
+        businessTaggers: businesses,
+        counts: {
+          totalTaggers: users.length + businesses.length,
+          userTaggers: users.length,
+          businessTaggers: businesses.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Admin tagged business details error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
+  }
+};
+
 module.exports = {
   listBusinessTaggersForAdmin,
   listBusinessTaggingsForAdmin,
+  listTaggedBusinessesForAdmin,
+  getTaggedBusinessDetailsForAdmin,
 };

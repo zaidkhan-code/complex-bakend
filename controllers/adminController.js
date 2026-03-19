@@ -227,6 +227,34 @@ const getRequestTimezone = (req) =>
     req.headers["x-timezone"] || req.headers["x-user-timezone"] || "",
   ).trim();
 
+const buildBusinessWhereClause = ({ search, status, autoApprove }) => {
+  const where = {};
+
+  if (search) {
+    where[Op.or] = [
+      { name: { [Op.iLike]: `%${search}%` } },
+      { email: { [Op.iLike]: `%${search}%` } },
+      { phone: { [Op.iLike]: `%${search}%` } },
+    ];
+  }
+
+  if (status) {
+    where.status = status;
+  }
+
+  if (autoApprove !== undefined && autoApprove !== null && autoApprove !== "") {
+    where.autoApprovePromotions = String(autoApprove).toLowerCase() === "true";
+  }
+
+  return where;
+};
+
+const escapeCsvCell = (value) => {
+  const cell = value === null || value === undefined ? "" : String(value);
+  if (/[",\n\r]/.test(cell)) return `"${cell.replace(/"/g, '""')}"`;
+  return cell;
+};
+
 // @desc    Get all users with filters
 // @route   GET /api/admin/users
 // @access  Private (Admin)
@@ -283,27 +311,7 @@ const getAllUsers = async (req, res) => {
 const getAllBusinesses = async (req, res) => {
   try {
     const { search, status, page = 1, limit = 10, autoApprove } = req.query;
-
-    const where = {};
-
-    // Search by name, email, or phone
-    if (search) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { email: { [Op.iLike]: `%${search}%` } },
-        { phone: { [Op.iLike]: `%${search}%` } },
-      ];
-    }
-
-    // Filter by status (active, inactive, blocked, suspended)
-    if (status) {
-      where.status = status;
-    }
-
-    // Filter by auto-approve setting
-    if (autoApprove) {
-      where.autoApprovePromotions = autoApprove === "true";
-    }
+    const where = buildBusinessWhereClause({ search, status, autoApprove });
 
     const offset = (page - 1) * limit;
 
@@ -374,6 +382,89 @@ const getAllBusinesses = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Export businesses as CSV
+// @route   GET /api/admin/businesses/export
+// @access  Private (Admin)
+const exportBusinessesCsv = async (req, res) => {
+  try {
+    const { search, status, autoApprove, limit } = req.query;
+    const where = buildBusinessWhereClause({ search, status, autoApprove });
+    const parsedLimit = Number(limit);
+    const exportLimit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(Math.floor(parsedLimit), 10000)
+        : null;
+
+    const businesses = await Business.findAll({
+      where,
+      attributes: { exclude: ["password"] },
+      order: [["createdAt", "DESC"]],
+      ...(exportLimit ? { limit: exportLimit } : {}),
+    });
+
+    const header = [
+      "id",
+      "name",
+      "email",
+      "phone",
+      "businessType",
+      "categories",
+      "personName",
+      "businessAddress",
+      "state",
+      "timezone",
+      "autoApprovePromotions",
+      "status",
+      "placeId",
+      "lat",
+      "lng",
+      "logoUrl",
+      "createdAt",
+      "updatedAt",
+    ];
+
+    const lines = [header.join(",")];
+    for (const business of businesses) {
+      const row = business?.toJSON ? business.toJSON() : business;
+      const categories = Array.isArray(row?.categories)
+        ? row.categories.join("|")
+        : "";
+
+      const values = [
+        row.id,
+        row.name,
+        row.email,
+        row.phone,
+        row.businessType,
+        categories,
+        row.personName,
+        row.businessAddress,
+        row.state,
+        row.timezone,
+        row.autoApprovePromotions,
+        row.status,
+        row.placeId,
+        row.lat,
+        row.lng,
+        row.logoUrl,
+        row.createdAt ? new Date(row.createdAt).toISOString() : "",
+        row.updatedAt ? new Date(row.updatedAt).toISOString() : "",
+      ].map(escapeCsvCell);
+
+      lines.push(values.join(","));
+    }
+
+    const csv = lines.join("\n");
+    const fileName = `businesses-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.status(200).send(csv);
+  } catch (error) {
+    return res.status(500).json({ message: error.message || "Export failed" });
   }
 };
 
@@ -1520,6 +1611,7 @@ module.exports = {
   makeAdmin,
   toggleBusinessAutoApprove,
   getAllBusinesses,
+  exportBusinessesCsv,
   grantBusinessSubscription,
   approvePromotion,
   updateBusinessStatus,

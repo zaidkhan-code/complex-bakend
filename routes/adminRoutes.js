@@ -5,6 +5,7 @@ const multer = require("multer");
 const {
   getAllUsers,
   getAllBusinesses,
+  exportBusinessesCsv,
   updateUserStatus,
   updateBusinessStatus,
   grantBusinessSubscription,
@@ -32,6 +33,8 @@ const {
 const {
   listBusinessTaggersForAdmin,
   listBusinessTaggingsForAdmin,
+  listTaggedBusinessesForAdmin,
+  getTaggedBusinessDetailsForAdmin,
 } = require("../controllers/businessTaggingAdminController");
 
 const { protect } = require("../middleware/authMiddleware");
@@ -86,6 +89,11 @@ router.get(
   "/businesses",
   checkPermission("businesses", "view"),
   getAllBusinesses,
+);
+router.get(
+  "/businesses/export",
+  checkPermission("businesses", "view"),
+  exportBusinessesCsv,
 );
 
 router.put(
@@ -206,6 +214,16 @@ router.get(
   "/business-tagging/taggings",
   checkPermission("business_tagging", "view"),
   listBusinessTaggingsForAdmin,
+);
+router.get(
+  "/business-tagging/businesses",
+  checkPermission("business_tagging", "view"),
+  listTaggedBusinessesForAdmin,
+);
+router.get(
+  "/business-tagging/business-details",
+  checkPermission("business_tagging", "view"),
+  getTaggedBusinessDetailsForAdmin,
 );
 
 module.exports = router;

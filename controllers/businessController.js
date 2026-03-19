@@ -165,8 +165,6 @@ const normalizeTemplateId = (value) => {
 };
 
 const EXTRA_STATE_PRICE = 20;
-const TRIAL_FREE_CITIES = 2;
-const TRIAL_FREE_STATES = 0;
 
 const buildApiErrorPayload = (error, fallbackMessage = "Server error") => ({
   message: error?.message || fallbackMessage,
@@ -294,6 +292,13 @@ const createPromotion = async (req, res) => {
       req.activeSubscription ||
       (await getValidActiveSubscription(req.business.id));
 
+    if (!subscription) {
+      return res.status(403).json({
+        message: "Active subscription required to create promotions",
+        code: "ACTIVE_SUBSCRIPTION_REQUIRED",
+      });
+    }
+
     const {
       templateId,
       businessTemplateId,
@@ -408,9 +413,7 @@ const createPromotion = async (req, res) => {
     const safeCities = normalizeArray(cities);
     const safeTimezones = normalizeArray(timezones);
 
-    const maxCitiesAllowed = subscription
-      ? Math.max(0, Number(subscription.freeCities || 0))
-      : TRIAL_FREE_CITIES;
+    const maxCitiesAllowed = Math.max(0, Number(subscription.freeCities || 0));
 
     if (safeCities.length > maxCitiesAllowed) {
       return res.status(400).json({
@@ -418,9 +421,7 @@ const createPromotion = async (req, res) => {
       });
     }
 
-    const freeStates = subscription
-      ? Number(subscription.freeStates || 0)
-      : TRIAL_FREE_STATES;
+    const freeStates = Number(subscription.freeStates || 0);
     const extraStates = Math.max(0, safeStates.length - freeStates);
     const stateCost = extraStates > 0 ? extraStates * EXTRA_STATE_PRICE : 0;
     const totalPrice = stateCost;
@@ -653,6 +654,8 @@ const getPromotionById = async (req, res) => {
 // @access  Private (Business)
 const updatePromotion = async (req, res) => {
   try {
+    const activeSubscription = await getValidActiveSubscription(req.business.id);
+
     const promotion = await Promotion.findOne({
       where: {
         id: req.params.id,
@@ -710,10 +713,13 @@ const updatePromotion = async (req, res) => {
       });
     }
 
-    const isScheduleEnabled =
+    const requestedScheduleEnabled =
       scheduleEnabled !== undefined
         ? parseBoolean(scheduleEnabled, promotion.scheduleEnabled)
         : Boolean(promotion.scheduleEnabled);
+    const isScheduleEnabled = activeSubscription
+      ? requestedScheduleEnabled
+      : false;
 
     if (isScheduleEnabled) {
       ensureValidScheduleWindow(schedulePayload);
