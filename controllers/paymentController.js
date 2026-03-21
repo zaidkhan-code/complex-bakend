@@ -4,6 +4,9 @@ const Promotion = require("../models/Promotion");
 const SubscriptionTemplate = require("../models/SubscriptionTemplate");
 const BusinessSubscription = require("../models/BusinessSubscription");
 const { reschedulePromotionJobs } = require("../services/promotionScheduler");
+const {
+  sendBusinessSubscriptionConfirmationEmail,
+} = require("../services/emailService");
 
 const handleWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
@@ -56,7 +59,7 @@ const handleWebhook = async (req, res) => {
       );
 
       // ✅ Create new active subscription
-      await BusinessSubscription.create({
+      const createdSubscription = await BusinessSubscription.create({
         businessId: business.id,
         subscriptionTemplateId: template.id,
         startDate,
@@ -67,6 +70,19 @@ const handleWebhook = async (req, res) => {
         stripeSubscriptionId: subscription.id,
         status: "active",
       });
+
+      try {
+        await sendBusinessSubscriptionConfirmationEmail({
+          business,
+          subscription: createdSubscription,
+          template,
+        });
+      } catch (emailError) {
+        console.error(
+          `Subscription confirmation email failed for business ${business.id}:`,
+          emailError?.message || emailError,
+        );
+      }
 
       console.log(
         `✅ [WEBHOOK] Subscription activated for business ${business.id}`,
@@ -106,8 +122,6 @@ const handleWebhook = async (req, res) => {
 
   res.json({ received: true });
 };
-
-module.exports = handleWebhook;
 
 // const stripe = require("../config/stripe");
 // const Promotion = require("../models/Promotion");

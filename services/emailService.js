@@ -1,4 +1,7 @@
 const { Resend } = require("resend");
+const {
+  buildBusinessSubscriptionConfirmationTemplate,
+} = require("./emailTemplates/businessSubscriptionConfirmationTemplate");
 
 const hasResendConfig = () => Boolean(process.env.RESEND_API_KEY);
 
@@ -141,6 +144,36 @@ const sendSupportAutoReply = async (supportMessage) => {
   return result;
 };
 
+const sendBusinessSubscriptionConfirmationEmail = async ({
+  business,
+  subscription,
+  template,
+}) => {
+  if (!business?.email) {
+    return { skipped: true, reason: "Business email is not available" };
+  }
+
+  const from = resolveFrom();
+  const { subject, text, html } = buildBusinessSubscriptionConfirmationTemplate(
+    {
+      businessName: business?.name,
+      subscription,
+      template,
+    },
+  );
+
+  const result = await sendEmail({
+    from,
+    to: business.email,
+    subject,
+    text,
+    html,
+  });
+
+  return result;
+};
+
 module.exports = {
   sendSupportAutoReply,
+  sendBusinessSubscriptionConfirmationEmail,
 };
