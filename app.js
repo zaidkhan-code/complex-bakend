@@ -13,11 +13,15 @@ const app = express();
 // Security middleware
 app.use(helmet());
 
+const normalizeOrigin = (origin = "") =>
+  String(origin).trim().replace(/\/+$/, "").toLowerCase();
+
 const allowedOrigins = [
+  "https://complisk.com/",
+  "https://www.complisk.com/",
   "http://localhost:8080",
-  "https://complisk.com",
-  "https://www.complisk.com",
 ];
+const allowedOriginSet = new Set(allowedOrigins.map(normalizeOrigin));
 
 // CORS
 const corsOptions = {
@@ -25,7 +29,7 @@ const corsOptions = {
     // Allow non-browser requests (no Origin header)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOriginSet.has(normalizeOrigin(origin))) return callback(null, true);
     console.log(`Blocked CORS request from origin: ${origin}`, allowedOrigins);
 
     // Block unknown origins (browser will show CORS error)

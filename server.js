@@ -9,15 +9,15 @@ require("dotenv").config();
 
 const PORT = process.env.PORT || 5000;
 const HOST = "0.0.0.0";
-const isCloudRun = Boolean(process.env.K_SERVICE);
-const enableCronJobs =
-  process.env.ENABLE_CRON_JOBS === undefined
-    ? !isCloudRun
-    : process.env.ENABLE_CRON_JOBS === "true";
-const enableJobWorkers =
-  process.env.ENABLE_JOB_WORKERS === undefined
-    ? !isCloudRun
-    : process.env.ENABLE_JOB_WORKERS === "true";
+const parseBooleanEnv = (value, defaultValue = true) => {
+  if (value === undefined) return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+};
+
+// Run cron + pg-boss workers by default in both local and production.
+const enableCronJobs = parseBooleanEnv(process.env.ENABLE_CRON_JOBS, true);
+const enableJobWorkers = parseBooleanEnv(process.env.ENABLE_JOB_WORKERS, true);
 let httpServer = null;
 let hasStartedCronJobs = false;
 let hasStartedWorkers = false;
