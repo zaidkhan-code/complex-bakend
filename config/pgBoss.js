@@ -1,4 +1,5 @@
 const PgBoss = require("pg-boss");
+require("dotenv").config();
 
 let boss = null;
 let isStarted = false;
@@ -15,9 +16,11 @@ const startPgBoss = async () => {
     1,
     Number(process.env.PG_BOSS_MONITOR_INTERVAL_SECONDS || 30),
   );
+  const useSSL = process.env.DB_SSL === "true";
 
   boss = new PgBoss({
     connectionString: process.env.DATABASE_URL,
+    ...(useSSL ? { ssl: { require: true, rejectUnauthorized: false } } : {}),
     schema: process.env.PG_BOSS_SCHEMA || "pgboss",
     monitorStateIntervalSeconds,
     archiveCompletedAfterSeconds: 24 * 60 * 60,

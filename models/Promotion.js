@@ -43,7 +43,7 @@ const Promotion = sequelize.define(
       allowNull: false,
       defaultValue: [],
     },
-    // Support multiple cities/states/timezones for a promotion (JSON arrays)
+    // Locations are stored in PromotionLocations; only timezones remain here for compatibility.
     runDate: {
       type: DataTypes.DATEONLY,
       allowNull: false,
@@ -180,16 +180,6 @@ const Promotion = sequelize.define(
         name: "idx_promotions_categories_gin",
         using: "gin",
         fields: ["categories"],
-      },
-      {
-        name: "idx_promotions_cities_gin",
-        using: "gin",
-        fields: ["cities"],
-      },
-      {
-        name: "idx_promotions_states_gin",
-        using: "gin",
-        fields: ["states"],
       },
       {
         name: "idx_promotions_timezones_gin",

@@ -37,16 +37,6 @@ module.exports = {
           requiredColumns: ['categories'],
         },
         {
-          sql: 'CREATE INDEX IF NOT EXISTS "idx_promotions_cities_gin" ON "Promotions" USING GIN ("cities");',
-          tableColumns: promotionsColumns,
-          requiredColumns: ['cities'],
-        },
-        {
-          sql: 'CREATE INDEX IF NOT EXISTS "idx_promotions_states_gin" ON "Promotions" USING GIN ("states");',
-          tableColumns: promotionsColumns,
-          requiredColumns: ['states'],
-        },
-        {
           sql: 'CREATE INDEX IF NOT EXISTS "idx_promotions_timezones_gin" ON "Promotions" USING GIN ("timezones");',
           tableColumns: promotionsColumns,
           requiredColumns: ['timezones'],
@@ -99,8 +89,6 @@ module.exports = {
         'DROP INDEX IF EXISTS "idx_businesses_auto_approve";',
         'DROP INDEX IF EXISTS "idx_businesses_status_created";',
         'DROP INDEX IF EXISTS "idx_promotions_timezones_gin";',
-        'DROP INDEX IF EXISTS "idx_promotions_states_gin";',
-        'DROP INDEX IF EXISTS "idx_promotions_cities_gin";',
         'DROP INDEX IF EXISTS "idx_promotions_categories_gin";',
         'DROP INDEX IF EXISTS "idx_promotions_payment_status";',
         'DROP INDEX IF EXISTS "idx_promotions_run_stop";',
