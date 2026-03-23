@@ -7,6 +7,8 @@ module.exports = {
 
   support_messages: ["view", "export"],
 
+  business_tagging: ["view"],
+
   businesses: [
     "view",
     "edit",
