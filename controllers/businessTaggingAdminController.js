@@ -401,7 +401,6 @@ SELECT
   b.name AS "businessName",
   b.email AS "businessEmail",
   b.phone AS "businessPhone",
-  b."businessType" AS "businessType",
   b."businessAddress" AS "businessAddress"
 FROM "BusinessTaggings" bt
 LEFT JOIN "Users" u ON u.id = bt."taggerUserId"
@@ -457,7 +456,6 @@ ORDER BY bt."createdAt" DESC;
           name: row.businessName || "Unknown Business",
           email: row.businessEmail || null,
           phone: row.businessPhone || null,
-          businessType: row.businessType || null,
           businessAddress: row.businessAddress || null,
           taggedAt: row.createdAt,
         });

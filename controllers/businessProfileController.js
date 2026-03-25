@@ -85,7 +85,6 @@ const updateBusinessProfile = async (req, res) => {
       email,
       phone,
       personName,
-      businessType,
       businessAddress,
       state,
       timezone,
@@ -132,13 +131,6 @@ const updateBusinessProfile = async (req, res) => {
 
     if (personName !== undefined) {
       business.personName = String(personName || "").trim() || null;
-    }
-
-    if (businessType !== undefined) {
-      const nextType = String(businessType || "").trim();
-      if (nextType) {
-        business.businessType = nextType;
-      }
     }
 
     if (businessAddress !== undefined) {

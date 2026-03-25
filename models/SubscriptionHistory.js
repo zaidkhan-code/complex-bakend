@@ -19,8 +19,6 @@ const SubscriptionHistory = sequelize.define(
     stripeSubscriptionId: DataTypes.STRING,
     stripePriceId: DataTypes.STRING,
 
-    businessType: DataTypes.STRING,
-
     months: DataTypes.INTEGER,
 
     startDate: DataTypes.DATE,

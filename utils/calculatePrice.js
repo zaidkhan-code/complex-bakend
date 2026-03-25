@@ -1,19 +1,5 @@
 /**
- * Calculate promotion price based on business category and selections
- *
- * PRICING RULES:
- *
- * Online Store (online-ecommerce):
- *   - Base: $10 (includes 1 state)
- *   - Additional states: $10 each
- *   - Timezones: $30 each (Eastern: $50)
- *   - Total = Base + Additional States + Timezones
- *
- * Physical Location (small, medium, large):
- *   - Base: $10 (includes 2 cities) - ONLY if no states selected
- *   - States: $20 each (replaces base when selected)
- *   - Timezones: $60 each (Eastern: $100)
- *   - Total = (Base OR States) + Timezones
+ * Calculate promotion price based on selected locations and schedule.
  */
 
 const calculatePrice = ({
@@ -25,11 +11,8 @@ const calculatePrice = ({
   cities = [],
   states = [],
   timezones = [],
-  businessType = "small", // 'online-ecommerce', 'small', 'medium', 'large'
 }) => {
   try {
-    const isOnlineStore = businessType === "online-ecommerce";
-
     let baseCost = 0;
     let stateCost = 0;
     let timezoneCost = 0;
@@ -39,55 +22,27 @@ const calculatePrice = ({
       tz.toLowerCase().includes("eastern")
     );
 
-    if (isOnlineStore) {
-      // ===== ONLINE STORE PRICING =====
+    const stateCount = states.length;
 
-      // Base plan: $10 (includes 1 state)
-      baseCost = 10;
-
-      // Additional states: $10 each (beyond the first)
-      const stateCount = states.length;
-      if (stateCount > 1) {
-        stateCost = (stateCount - 1) * 10;
-      }
-
-      // Timezones: $30 each, Eastern: $50
-      if (timezones.length > 0) {
-        if (hasEasternTimezone) {
-          // Count non-Eastern timezones
-          const nonEasternCount = timezones.filter(
-            (tz) => !tz.toLowerCase().includes("eastern")
-          ).length;
-          timezoneCost = nonEasternCount * 30 + 50;
-        } else {
-          timezoneCost = timezones.length * 30;
-        }
-      }
+    if (stateCount > 0) {
+      // If states selected: $20 per state (NO base $10)
+      stateCost = stateCount * 20;
+      baseCost = 0;
     } else {
-      // ===== PHYSICAL LOCATION PRICING =====
+      // No states: Starter plan $10 (includes 2 cities)
+      baseCost = 10;
+    }
 
-      const stateCount = states.length;
-
-      if (stateCount > 0) {
-        // If states selected: $20 per state (NO base $10)
-        stateCost = stateCount * 20;
-        baseCost = 0;
+    // Timezones: $60 each, Eastern: $100
+    if (timezones.length > 0) {
+      if (hasEasternTimezone) {
+        // Count non-Eastern timezones
+        const nonEasternCount = timezones.filter(
+          (tz) => !tz.toLowerCase().includes("eastern")
+        ).length;
+        timezoneCost = nonEasternCount * 60 + 100;
       } else {
-        // No states: Starter plan $10 (includes 2 cities)
-        baseCost = 10;
-      }
-
-      // Timezones: $60 each, Eastern: $100
-      if (timezones.length > 0) {
-        if (hasEasternTimezone) {
-          // Count non-Eastern timezones
-          const nonEasternCount = timezones.filter(
-            (tz) => !tz.toLowerCase().includes("eastern")
-          ).length;
-          timezoneCost = nonEasternCount * 60 + 100;
-        } else {
-          timezoneCost = timezones.length * 60;
-        }
+        timezoneCost = timezones.length * 60;
       }
     }
 

@@ -133,7 +133,6 @@ const getPromotionWithRelations = async (promotionId) => {
           "id",
           "name",
           "email",
-          "businessType",
           "autoApprovePromotions",
           "status",
         ],
@@ -253,6 +252,34 @@ const escapeCsvCell = (value) => {
   const cell = value === null || value === undefined ? "" : String(value);
   if (/[",\n\r]/.test(cell)) return `"${cell.replace(/"/g, '""')}"`;
   return cell;
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isTransientDbTimeoutError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.name === "SequelizeConnectionAcquireTimeoutError" ||
+    error?.name === "SequelizeConnectionError" ||
+    error?.code === "ECONNRESET" ||
+    message.includes("query read timeout")
+  );
+};
+
+const runWithDbRetry = async (operation, retries = 1) => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientDbTimeoutError(error) || attempt === retries) {
+        throw error;
+      }
+      await sleep(300);
+    }
+  }
+  throw lastError;
 };
 
 // @desc    Get all users with filters
@@ -410,7 +437,6 @@ const exportBusinessesCsv = async (req, res) => {
       "name",
       "email",
       "phone",
-      "businessType",
       "categories",
       "personName",
       "businessAddress",
@@ -438,7 +464,6 @@ const exportBusinessesCsv = async (req, res) => {
         row.name,
         row.email,
         row.phone,
-        row.businessType,
         categories,
         row.personName,
         row.businessAddress,
@@ -693,7 +718,6 @@ const getAllPromotions = async (req, res) => {
             "id",
             "name",
             "email",
-            "businessType",
             "autoApprovePromotions",
             "status",
           ],
@@ -951,7 +975,10 @@ const changePromotionStatus = async (req, res) => {
       });
     }
 
-    const promotion = await Promotion.findByPk(promotionId);
+    const promotion = await runWithDbRetry(
+      () => Promotion.findByPk(promotionId),
+      1,
+    );
 
     if (!promotion) {
       return res.status(404).json({ message: "Promotion not found" });
@@ -1011,17 +1038,31 @@ const runPromotion = async (req, res) => {
 
     promotion.status = "active";
     promotion.approvedAt = promotion.approvedAt || new Date();
-    await promotion.save({ fields: ["status", "approvedAt", "updatedAt"] });
+    await runWithDbRetry(
+      () => promotion.save({ fields: ["status", "approvedAt", "updatedAt"] }),
+      1,
+    );
 
     console.log(`✅ [ADMIN] Promotion ${promotionId} is now active`);
+    const promotionWithRelations = await runWithDbRetry(
+      () => getPromotionWithRelations(promotion.id),
+      1,
+    );
     res.json({
       message: "Promotion activated",
       promotion: normalizePromotionForFrontend(
-        (await getPromotionWithRelations(promotion.id)) || promotion,
+        promotionWithRelations || promotion,
       ),
     });
   } catch (error) {
     console.error("Error running promotion:", error);
+    if (isTransientDbTimeoutError(error)) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Database is temporarily slow. Please try running this promotion again in a few seconds.",
+      });
+    }
     res.status(error.statusCode || 500).json({ message: error.message });
   }
 };

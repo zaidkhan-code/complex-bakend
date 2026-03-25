@@ -2,7 +2,48 @@ const User = require("../models/User");
 const Business = require("../models/Business");
 const { generateToken } = require("../middleware/authMiddleware");
 const Role = require("../models/Role");
-const { sequelize } = require("../config/db");
+
+const withTimeout = (promise, ms, label) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        const error = new Error(`${label} timeout`);
+        error.code = "DB_TIMEOUT";
+        reject(error);
+      }, ms);
+    }),
+  ]);
+
+const isTransientDbError = (error) =>
+  error?.code === "DB_TIMEOUT" ||
+  error?.code === "ECONNRESET" ||
+  error?.name === "SequelizeConnectionError" ||
+  error?.name === "SequelizeConnectionAcquireTimeoutError";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const runDbOperation = async (
+  operation,
+  label,
+  { timeoutMs = 8000, retries = 1 } = {},
+) => {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await withTimeout(Promise.resolve().then(operation), timeoutMs, label);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientDbError(error) || attempt === retries) {
+        throw error;
+      }
+      await sleep(300);
+    }
+  }
+
+  throw lastError;
+};
 
 const parseLatLng = ({ lat, lng }) => {
   const numLat = Number(lat);
@@ -67,7 +108,6 @@ const registerBusiness = async (req, res) => {
       password,
       phone,
       categories,
-      businessType,
       personName,
       businessAddress,
       placeId,
@@ -76,13 +116,16 @@ const registerBusiness = async (req, res) => {
       timezone,
     } = req.body;
     console.log(
-      `📝 [REGISTER BUSINESS] Request - Name: ${name}, BusinessType: ${businessType}, Categories: ${JSON.stringify(
+      `📝 [REGISTER BUSINESS] Request - Name: ${name}, Categories: ${JSON.stringify(
         categories,
       )}`,
     );
 
     // Check if business exists
-    const businessExists = await Business.findOne({ where: { email } });
+    const businessExists = await runDbOperation(
+      () => Business.findOne({ where: { email } }),
+      "Business lookup",
+    );
     if (businessExists) {
       return res.status(400).json({ message: "Business already exists" });
     }
@@ -97,61 +140,63 @@ const registerBusiness = async (req, res) => {
     const parsedCoords = parseLatLng({ lat, lng });
 
     // Create business with all fields
-    const business = await Business.create({
-      name,
-      email,
-      password,
-      phone,
-      categories: categories, // Store as JSON array
-      businessType: businessType || "small",
-      personName: personName || null,
-      businessAddress: businessAddress || null,
-      placeId: placeId || null,
-      lat: parsedCoords.lat,
-      lng: parsedCoords.lng,
-      coordinates: buildGeoPoint(parsedCoords),
-      autoApprovePromotions: false, // Default: admin must approve
-      timezone: timezone || "UTC",
-    });
+    const business = await runDbOperation(
+      () =>
+        Business.create({
+        name,
+        email,
+        password,
+        phone,
+        categories: categories, // Store as JSON array
+        personName: personName || null,
+        businessAddress: businessAddress || null,
+        placeId: placeId || null,
+        lat: parsedCoords.lat,
+        lng: parsedCoords.lng,
+        coordinates: buildGeoPoint(parsedCoords),
+        autoApprovePromotions: false, // Default: admin must approve
+        timezone: timezone || "UTC",
+        }),
+      "Business creation",
+    );
 
     console.log(
-      `✅ [REGISTER BUSINESS] Business created - ID: ${business.id}, BusinessType: ${business.businessType}`,
+      `✅ [REGISTER BUSINESS] Business created - ID: ${business.id}`,
     );
 
     if (business) {
-      // Ensure PostGIS geography is persisted even if the ORM shape isn't accepted by the DB/runtime.
-      if (
-        Number.isFinite(Number(parsedCoords.lat)) &&
-        Number.isFinite(Number(parsedCoords.lng))
-      ) {
-        try {
-          await sequelize.query(
-            'UPDATE "Businesses" SET "coordinates" = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id;',
-            {
-              replacements: {
-                id: business.id,
-                lat: Number(parsedCoords.lat),
-                lng: Number(parsedCoords.lng),
-              },
-              type: sequelize.Sequelize.QueryTypes.UPDATE,
-            },
-          );
-        } catch (e) {
-          // Don't fail registration if PostGIS/column isn't ready yet.
-        }
-      }
-
       const responseData = {
         ...business?.dataValues,
         token: generateToken(business.id, "business"),
       };
       console.log(
-        `✅ [REGISTER BUSINESS] Response - BusinessType: ${responseData.businessType}`,
+        `✅ [REGISTER BUSINESS] Response sent for ID: ${responseData.id}`,
       );
       res.status(201).json(responseData);
     }
   } catch (error) {
     console.error(`❌ [REGISTER BUSINESS] Error:`, error.message);
+    if (
+      error?.code === "DB_TIMEOUT" ||
+      error?.code === "ECONNRESET" ||
+      error?.name === "SequelizeConnectionError" ||
+      error?.name === "SequelizeConnectionAcquireTimeoutError"
+    ) {
+      return res.status(503).json({
+        message:
+          "Database connection is unstable right now. Please try again in a few seconds.",
+      });
+    }
+    if (error?.name === "SequelizeValidationError") {
+      return res.status(400).json({
+        message: "Validation error",
+        errors: (error.errors || []).map((e) => ({
+          field: e.path,
+          message: e.message,
+          value: e.value,
+        })),
+      });
+    }
     res.status(500).json({ message: error.message });
   }
 };
