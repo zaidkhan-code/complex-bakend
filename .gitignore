@@ -2,8 +2,6 @@
 node_modules/
 
 # Environment files
-.env
-.env.*
 
 # Logs
 logs/
@@ -32,3 +30,4 @@ Thumbs.db
 .cache/
 tmp/
 temp/
+config.bat
