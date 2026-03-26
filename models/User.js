@@ -66,6 +66,16 @@ const User = sequelize.define(
       defaultValue: "UTC",
       comment: "User timezone used for admin/business schedule actions",
     },
+    resetPasswordToken: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "SHA-256 hash of password reset token",
+    },
+    resetPasswordExpires: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Expiration timestamp for password reset token",
+    },
   },
   {
     timestamps: true,

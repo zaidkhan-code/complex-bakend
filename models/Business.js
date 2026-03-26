@@ -101,6 +101,16 @@ const Business = sequelize.define(
     subscriptionEnd: DataTypes.DATE,
     stripeSubscriptionId: DataTypes.STRING,
     stripeCustomerId: DataTypes.STRING,
+    resetPasswordToken: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "SHA-256 hash of password reset token",
+    },
+    resetPasswordExpires: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Expiration timestamp for password reset token",
+    },
   },
   {
     timestamps: true,
