@@ -49,20 +49,12 @@ const resolveScheduleTimezone = ({
   return normalizeTimezone(DEFAULT_TIMEZONE);
 };
 
-const parseDateTimeInput = (value) => {
-  if (value === undefined || value === null || value === "") return null;
-  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
 const buildSchedulePayload = ({
   runDate,
   stopDate,
   runTime,
   stopTime,
   scheduleTimezone,
-  scheduleStartAt,
-  scheduleEndAt,
 }) => {
   const normalizedRunDate = normalizeDateOnly(runDate);
   const normalizedStopDate = normalizeDateOnly(stopDate);
@@ -82,37 +74,21 @@ const buildSchedulePayload = ({
     return null;
   }
 
-  const hasExplicitStartAt =
-    scheduleStartAt !== undefined && scheduleStartAt !== null && scheduleStartAt !== "";
-  const hasExplicitEndAt =
-    scheduleEndAt !== undefined && scheduleEndAt !== null && scheduleEndAt !== "";
-  const explicitStartAt = parseDateTimeInput(scheduleStartAt);
-  const explicitEndAt = parseDateTimeInput(scheduleEndAt);
+  const utcWindow = buildUtcWindow({
+    runDate: normalizedRunDate,
+    stopDate: normalizedStopDate,
+    runTime: normalizedRunTime,
+    stopTime: normalizedStopTime,
+    timezone: normalizedScheduleTimezone,
+  });
 
-  let nextScheduleStartAt = explicitStartAt;
-  let nextScheduleEndAt = explicitEndAt;
-
-  if (hasExplicitStartAt || hasExplicitEndAt) {
-    if (!nextScheduleStartAt || !nextScheduleEndAt) {
-      return null;
-    }
-  } else {
-    const utcWindow = buildUtcWindow({
-      runDate: normalizedRunDate,
-      stopDate: normalizedStopDate,
-      runTime: normalizedRunTime,
-      stopTime: normalizedStopTime,
-      timezone: normalizedScheduleTimezone,
-    });
-
-    if (!utcWindow) {
-      return null;
-    }
-
-    normalizedScheduleTimezone = utcWindow.timezone;
-    nextScheduleStartAt = utcWindow.startAt;
-    nextScheduleEndAt = utcWindow.endAt;
+  if (!utcWindow) {
+    return null;
   }
+
+  normalizedScheduleTimezone = utcWindow.timezone;
+  const nextScheduleStartAt = utcWindow.startAt;
+  const nextScheduleEndAt = utcWindow.endAt;
 
   return {
     runDate: normalizedRunDate,

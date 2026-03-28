@@ -14,6 +14,7 @@ const {
 } = require("../utils/promotionLocationUtils");
 const {
   parseBoolean,
+  resolveScheduleTimezone,
   buildSchedulePayload,
   ensureValidScheduleWindow,
   ensureNoScheduledOverlap,
@@ -163,7 +164,7 @@ const normalizeTemplateId = (value) => {
   return UUID_REGEX.test(normalized) ? normalized : null;
 };
 
-const EXTRA_STATE_PRICE = 20;
+const EXTRA_STATE_PRICE = 500;
 
 const buildApiErrorPayload = (error, fallbackMessage = "Server error") => ({
   message: error?.message || fallbackMessage,
@@ -172,6 +173,11 @@ const buildApiErrorPayload = (error, fallbackMessage = "Server error") => ({
     ? { conflictPromotionId: error.conflictPromotionId }
     : {}),
 });
+
+const getRequestTimezone = (req) =>
+  String(
+    req?.headers?.["x-timezone"] || req?.headers?.["x-user-timezone"] || "",
+  ).trim();
 
 const normalizeStateCode = (value) =>
   String(value || "")
@@ -311,9 +317,8 @@ const createPromotion = async (req, res) => {
       stopDate,
       runTime,
       stopTime,
-      scheduleStartAt,
-      scheduleEndAt,
       scheduleEnabled,
+      scheduleTimezone,
       metadata = {},
       categories = [],
     } = req.body;
@@ -380,13 +385,18 @@ const createPromotion = async (req, res) => {
       });
     }
 
+    const resolvedScheduleTimezone = resolveScheduleTimezone({
+      scheduleTimezone,
+      ownerTimezone: business.timezone,
+      actorTimezone: req.business?.timezone || getRequestTimezone(req),
+    });
+
     const schedulePayload = buildSchedulePayload({
       runDate,
       stopDate,
       runTime,
       stopTime,
-      scheduleStartAt,
-      scheduleEndAt,
+      scheduleTimezone: resolvedScheduleTimezone,
     });
 
     if (!schedulePayload) {
@@ -680,28 +690,31 @@ const updatePromotion = async (req, res) => {
       categories,
       metadata,
       scheduleEnabled,
-      scheduleStartAt,
-      scheduleEndAt,
+      scheduleTimezone,
     } = req.body;
 
     const nextRunDate = runDate !== undefined ? runDate : promotion.runDate;
     const nextStopDate = stopDate !== undefined ? stopDate : promotion.stopDate;
     const nextRunTime = runTime !== undefined ? runTime : promotion.runTime;
     const nextStopTime = stopTime !== undefined ? stopTime : promotion.stopTime;
-    const nextScheduleStartAt =
-      scheduleStartAt !== undefined
-        ? scheduleStartAt
-        : promotion.scheduleStartAt;
-    const nextScheduleEndAt =
-      scheduleEndAt !== undefined ? scheduleEndAt : promotion.scheduleEndAt;
+    const businessForTimezone = await Business.findByPk(req.business.id, {
+      attributes: ["timezone"],
+    });
+    const resolvedScheduleTimezone = resolveScheduleTimezone({
+      scheduleTimezone:
+        scheduleTimezone !== undefined
+          ? scheduleTimezone
+          : promotion.scheduleTimezone,
+      ownerTimezone: businessForTimezone?.timezone,
+      actorTimezone: req.business?.timezone || getRequestTimezone(req),
+    });
 
     const schedulePayload = buildSchedulePayload({
       runDate: nextRunDate,
       stopDate: nextStopDate,
       runTime: nextRunTime,
       stopTime: nextStopTime,
-      scheduleStartAt: nextScheduleStartAt,
-      scheduleEndAt: nextScheduleEndAt,
+      scheduleTimezone: resolvedScheduleTimezone,
     });
 
     if (!schedulePayload) {
