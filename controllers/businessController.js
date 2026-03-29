@@ -131,13 +131,7 @@ const getBusinessPromotionWithRelations = async (promotionId, businessId) => {
       {
         model: Business,
         as: "business",
-        attributes: [
-          "id",
-          "name",
-          "email",
-          "autoApprovePromotions",
-          "status",
-        ],
+        attributes: ["id", "name", "email", "autoApprovePromotions", "status"],
         required: false,
       },
       {
@@ -324,7 +318,8 @@ const createPromotion = async (req, res) => {
     } = req.body;
 
     const normalizedTemplateId = normalizeTemplateId(templateId);
-    const normalizedBusinessTemplateId = normalizeTemplateId(businessTemplateId);
+    const normalizedBusinessTemplateId =
+      normalizeTemplateId(businessTemplateId);
     const businessTemplate = normalizedBusinessTemplateId
       ? await BusinessPromotionTemplate.findOne({
           where: {
@@ -340,7 +335,8 @@ const createPromotion = async (req, res) => {
 
     if (normalizedBusinessTemplateId && !subscription) {
       return res.status(403).json({
-        message: "Active subscription is required before using a promotion template",
+        message:
+          "Active subscription is required before using a promotion template",
         code: "TEMPLATE_SUBSCRIPTION_REQUIRED",
       });
     }
@@ -662,7 +658,9 @@ const getPromotionById = async (req, res) => {
 // @access  Private (Business)
 const updatePromotion = async (req, res) => {
   try {
-    const activeSubscription = await getValidActiveSubscription(req.business.id);
+    const activeSubscription = await getValidActiveSubscription(
+      req.business.id,
+    );
 
     const promotion = await Promotion.findOne({
       where: {

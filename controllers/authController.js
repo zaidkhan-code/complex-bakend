@@ -3,6 +3,7 @@ const { Op } = require("sequelize");
 
 const User = require("../models/User");
 const Business = require("../models/Business");
+const { sequelize } = require("../config/db");
 const { generateToken } = require("../middleware/authMiddleware");
 const Role = require("../models/Role");
 const {
@@ -77,11 +78,22 @@ const PASSWORD_RESET_EXPIRY_MINUTES = Number(
   process.env.PASSWORD_RESET_EXPIRY_MINUTES || 60,
 );
 
-const normalizeAccountType = (type) => {
-  if (type === "user") return "user";
-  if (type === "business") return "business";
-  return null;
+const normalizeEmail = (email) =>
+  String(email || "")
+    .trim()
+    .toLowerCase();
+
+const createClientError = (message, statusCode = 400) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 };
+
+const buildEmailLookupWhere = (normalizedEmail) =>
+  sequelize.where(
+    sequelize.fn("LOWER", sequelize.col("email")),
+    normalizedEmail,
+  );
 
 const resolveFrontendBaseUrl = () =>
   process.env.FRONTEND_URL || "http://localhost:8080";
@@ -106,13 +118,137 @@ const getAccountDisplayName = ({ account, accountType }) => {
   return account?.fullName || "there";
 };
 
-const resolveAccountModel = (accountType) =>
-  accountType === "business" ? Business : User;
+const findAccountByEmail = async ({
+  email,
+  preferredAccountType,
+  transaction,
+} = {}) => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return {
+      account: null,
+      accountType: null,
+      userAccount: null,
+      businessAccount: null,
+    };
+  }
 
-const findAccountByEmail = async ({ email, accountType }) => {
-  const model = resolveAccountModel(accountType);
-  const account = await model.findOne({ where: { email } });
-  return { account, accountType };
+  const [userAccount, businessAccount] = await Promise.all([
+    User.findOne({
+      where: buildEmailLookupWhere(normalizedEmail),
+      ...(transaction ? { transaction } : {}),
+    }),
+    Business.findOne({
+      where: buildEmailLookupWhere(normalizedEmail),
+      ...(transaction ? { transaction } : {}),
+    }),
+  ]);
+
+  if (preferredAccountType === "user" && userAccount) {
+    return {
+      account: userAccount,
+      accountType: "user",
+      userAccount,
+      businessAccount,
+    };
+  }
+
+  if (preferredAccountType === "business" && businessAccount) {
+    return {
+      account: businessAccount,
+      accountType: "business",
+      userAccount,
+      businessAccount,
+    };
+  }
+
+  if (userAccount) {
+    return {
+      account: userAccount,
+      accountType: "user",
+      userAccount,
+      businessAccount,
+    };
+  }
+
+  if (businessAccount) {
+    return {
+      account: businessAccount,
+      accountType: "business",
+      userAccount,
+      businessAccount,
+    };
+  }
+
+  return {
+    account: null,
+    accountType: null,
+    userAccount,
+    businessAccount,
+  };
+};
+
+const buildPasswordResetWhere = (tokenHash) => ({
+  resetPasswordToken: tokenHash,
+  resetPasswordExpires: {
+    [Op.gt]: new Date(),
+  },
+});
+
+const findAccountByResetToken = async ({ tokenHash, preferredAccountType }) => {
+  const where = buildPasswordResetWhere(tokenHash);
+
+  if (preferredAccountType === "user") {
+    const userAccount = await User.findOne({ where });
+    if (userAccount) return { account: userAccount, accountType: "user" };
+
+    const businessAccount = await Business.findOne({ where });
+    if (businessAccount) {
+      return { account: businessAccount, accountType: "business" };
+    }
+
+    return { account: null, accountType: null };
+  }
+
+  if (preferredAccountType === "business") {
+    const businessAccount = await Business.findOne({ where });
+    if (businessAccount) {
+      return { account: businessAccount, accountType: "business" };
+    }
+
+    const userAccount = await User.findOne({ where });
+    if (userAccount) return { account: userAccount, accountType: "user" };
+
+    return { account: null, accountType: null };
+  }
+
+  const [userAccount, businessAccount] = await Promise.all([
+    User.findOne({ where }),
+    Business.findOne({ where }),
+  ]);
+
+  if (userAccount && businessAccount) {
+    return { account: null, accountType: null, isAmbiguous: true };
+  }
+
+  if (userAccount) return { account: userAccount, accountType: "user" };
+  if (businessAccount)
+    return { account: businessAccount, accountType: "business" };
+
+  return { account: null, accountType: null };
+};
+
+const withEmailRegistrationLock = async (email, operation) => {
+  const normalizedEmail = normalizeEmail(email);
+
+  return sequelize.transaction(async (transaction) => {
+    await sequelize.query("SELECT pg_advisory_xact_lock(hashtext(:email))", {
+      replacements: { email: normalizedEmail },
+      transaction,
+    });
+
+    return operation({ transaction, normalizedEmail });
+  });
 };
 
 // @desc    Register new user
@@ -122,18 +258,34 @@ const registerUser = async (req, res) => {
   try {
     const { fullName, email, password, timezone } = req.body;
 
-    const userExists = await User.findOne({ where: { email } });
-    if (userExists) {
-      return res.status(400).json({ message: "User already exists" });
-    }
+    const user = await runDbOperation(
+      () =>
+        withEmailRegistrationLock(
+          email,
+          async ({ transaction, normalizedEmail }) => {
+            const { userAccount, businessAccount } = await findAccountByEmail({
+              email: normalizedEmail,
+              transaction,
+            });
 
-    const user = await User.create({
-      fullName,
-      email,
-      password,
-      role: "user",
-      timezone: timezone || "UTC",
-    });
+            if (userAccount || businessAccount) {
+              throw createClientError("Email already exists", 400);
+            }
+
+            return User.create(
+              {
+                fullName,
+                email: normalizedEmail,
+                password,
+                role: "user",
+                timezone: timezone || "UTC",
+              },
+              { transaction },
+            );
+          },
+        ),
+      "User registration",
+    );
 
     if (user) {
       res.status(201).json({
@@ -145,6 +297,16 @@ const registerUser = async (req, res) => {
       });
     }
   } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(400)
+        .json({ message: "Email already exists in user or business account" });
+    }
+
     res.status(500).json({ message: error.message });
   }
 };
@@ -167,21 +329,13 @@ const registerBusiness = async (req, res) => {
       lng,
       timezone,
     } = req.body;
+    const normalizedEmail = normalizeEmail(email);
 
     console.log(
       `[REGISTER BUSINESS] Request - Name: ${name}, Categories: ${JSON.stringify(
         categories,
       )}`,
     );
-
-    const businessExists = await runDbOperation(
-      () => Business.findOne({ where: { email } }),
-      "Business lookup",
-    );
-
-    if (businessExists) {
-      return res.status(400).json({ message: "Business already exists" });
-    }
 
     if (!categories || categories.length === 0 || categories.length > 2) {
       return res.status(400).json({
@@ -193,20 +347,34 @@ const registerBusiness = async (req, res) => {
 
     const business = await runDbOperation(
       () =>
-        Business.create({
-          name,
-          email,
-          password,
-          phone,
-          categories,
-          personName: personName || null,
-          businessAddress: businessAddress || null,
-          placeId: placeId || null,
-          lat: parsedCoords.lat,
-          lng: parsedCoords.lng,
-          coordinates: buildGeoPoint(parsedCoords),
-          autoApprovePromotions: false,
-          timezone: timezone || "UTC",
+        withEmailRegistrationLock(email, async ({ transaction }) => {
+          const { userAccount, businessAccount } = await findAccountByEmail({
+            email,
+            transaction,
+          });
+
+          if (userAccount || businessAccount) {
+            throw createClientError("Email already exists ", 400);
+          }
+
+          return Business.create(
+            {
+              name,
+              email: normalizedEmail,
+              password,
+              phone,
+              categories,
+              personName: personName || null,
+              businessAddress: businessAddress || null,
+              placeId: placeId || null,
+              lat: parsedCoords.lat,
+              lng: parsedCoords.lng,
+              coordinates: buildGeoPoint(parsedCoords),
+              autoApprovePromotions: false,
+              timezone: timezone || "UTC",
+            },
+            { transaction },
+          );
         }),
       "Business creation",
     );
@@ -241,6 +409,10 @@ const registerBusiness = async (req, res) => {
   } catch (error) {
     console.error(`[REGISTER BUSINESS] Error:`, error.message);
 
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+
     if (
       error?.code === "DB_TIMEOUT" ||
       error?.code === "ECONNRESET" ||
@@ -264,6 +436,12 @@ const registerBusiness = async (req, res) => {
       });
     }
 
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(400)
+        .json({ message: "Email already exists in user or business account" });
+    }
+
     res.status(500).json({ message: error.message });
   }
 };
@@ -273,92 +451,105 @@ const registerBusiness = async (req, res) => {
 // @access  Public
 const login = async (req, res) => {
   try {
-    const { email, password, type = "user" } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    const password = req.body?.password;
+    const [userAccount, businessAccount] = await Promise.all([
+      User.findOne({
+        where: buildEmailLookupWhere(email),
+        include: [
+          {
+            model: Role,
+            as: "role",
+            attributes: ["id", "name", "permissions"],
+          },
+        ],
+      }),
+      Business.findOne({
+        where: buildEmailLookupWhere(email),
+      }),
+    ]);
 
-    let account;
+    const consoleppp = userAccount ? userAccount : businessAccount;
+    console.log(consoleppp, "check business and user account please");
 
-    if (type === "business") {
-      account = await Business.findOne({ where: { email } });
-
-      if (!account) {
-        return res.status(401).json({ message: "Invalid credentials" });
+    // Priority: If email exists in User model, respond as user/admin/superadmin.
+    if (userAccount) {
+      if (["blocked", "suspended"].includes(userAccount.status)) {
+        return res.status(403).json({ message: "Account is blocked" });
       }
 
-      const isMatch = await account.matchPassword(password);
+      const isMatch = await userAccount.matchPassword(password);
       if (!isMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      const token = generateToken(account.id, "business");
+      const isAdminAccount =
+        userAccount.accountType === "admin" ||
+        Boolean(userAccount.isSuperAdmin);
 
+      if (isAdminAccount) {
+        const token = generateToken(userAccount.id, "admin");
+        const response = {
+          id: userAccount.id,
+          email: userAccount.email,
+          token,
+          fullName: userAccount.fullName,
+          avatarUrl: userAccount.avatarUrl,
+          timezone: userAccount.timezone || "UTC",
+          isSuperAdmin: userAccount.isSuperAdmin,
+          accountType: "admin",
+        };
+
+        if (userAccount.isSuperAdmin) {
+          response.role = {
+            name: "SuperAdmin",
+            permissions: "ALL",
+          };
+        } else {
+          response.role = userAccount.role
+            ? {
+                id: userAccount.role.id,
+                name: userAccount.role.name,
+                permissions: userAccount.role.permissions,
+              }
+            : null;
+        }
+
+        return res.json(response);
+      }
+
+      const token = generateToken(userAccount.id, "user");
       return res.json({
-        ...account?.dataValues,
+        id: userAccount.id,
+        email: userAccount.email,
         token,
+        fullName: userAccount.fullName,
+        avatarUrl: userAccount.avatarUrl,
+        timezone: userAccount.timezone || "UTC",
+        role: "user",
+        accountType: "user",
       });
     }
 
-    account = await User.findOne({
-      where: { email },
-      include:
-        type === "admin"
-          ? [
-              {
-                model: Role,
-                as: "role",
-                attributes: ["id", "name", "permissions"],
-              },
-            ]
-          : [],
-    });
-
-    if (!account) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    if (account.status === "blocked") {
-      return res.status(403).json({ message: "Account is blocked" });
-    }
-
-    const isMatch = await account.matchPassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    const token = generateToken(account.id, type);
-
-    const response = {
-      id: account.id,
-      email: account.email,
-      token,
-      fullName: account.fullName,
-      avatarUrl: account.avatarUrl,
-      timezone: account.timezone || "UTC",
-    };
-
-    if (type === "admin") {
-      response.isSuperAdmin = account.isSuperAdmin;
-
-      if (account.isSuperAdmin) {
-        response.role = {
-          name: "SuperAdmin",
-          permissions: "ALL",
-        };
-      } else {
-        response.role = account.role
-          ? {
-              id: account.role.id,
-              name: account.role.name,
-              permissions: account.role.permissions,
-            }
-          : null;
+    if (businessAccount) {
+      if (["blocked", "suspended"].includes(businessAccount.status)) {
+        return res.status(403).json({ message: "Account is blocked" });
       }
+
+      const isMatch = await businessAccount.matchPassword(password);
+      if (!isMatch) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      const token = generateToken(businessAccount.id, "business");
+      return res.json({
+        ...businessAccount?.dataValues,
+        token,
+        accountType: "business",
+      });
     }
 
-    if (type === "user") {
-      response.role = "user";
-    }
-
-    return res.json(response);
+    return res.status(401).json({ message: "Invalid credentials" });
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ message: error?.message });
@@ -370,19 +561,11 @@ const login = async (req, res) => {
 // @access  Public
 const forgotPassword = async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim();
-    const accountType = normalizeAccountType(req.body?.accountType);
-
-    if (!accountType) {
-      return res.status(400).json({
-        message: "Account type must be either user or business",
-      });
-    }
+    const email = normalizeEmail(req.body?.email);
 
     const { account, accountType: resolvedAccountType } =
       await findAccountByEmail({
         email,
-        accountType,
       });
 
     if (!account) {
@@ -440,28 +623,24 @@ const forgotPassword = async (req, res) => {
 const resetPassword = async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
-    const accountType = normalizeAccountType(req.body?.accountType);
     const password = req.body?.password;
+    const tokenHash = buildPasswordResetTokenHash(token);
+    const {
+      account,
+      accountType: resolvedAccountType,
+      isAmbiguous,
+    } = await findAccountByResetToken({
+      tokenHash,
+    });
 
-    if (!accountType) {
-      return res.status(400).json({
-        message: "Account type must be either user or business",
+    if (isAmbiguous) {
+      return res.status(409).json({
+        message:
+          "This reset token matches multiple accounts. Please request a new password reset link.",
       });
     }
 
-    const model = resolveAccountModel(accountType);
-    const tokenHash = buildPasswordResetTokenHash(token);
-
-    const account = await model.findOne({
-      where: {
-        resetPasswordToken: tokenHash,
-        resetPasswordExpires: {
-          [Op.gt]: new Date(),
-        },
-      },
-    });
-
-    if (!account) {
+    if (!account || !resolvedAccountType) {
       return res.status(400).json({
         message: "Invalid or expired password reset token",
       });
@@ -476,7 +655,7 @@ const resetPassword = async (req, res) => {
     });
 
     return res.status(200).json({
-      message: "Password has been reset successfully",
+      message: `Password has been reset successfully for ${resolvedAccountType} account`,
     });
   } catch (error) {
     console.error("Reset password error:", error);

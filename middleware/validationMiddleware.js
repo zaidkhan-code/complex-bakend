@@ -40,18 +40,12 @@ const validateLogin = [
 // Forgot password validation
 const validateForgotPasswordRequest = [
   body("email").isEmail().withMessage("Valid email is required"),
-  body("accountType")
-    .isIn(["user", "business"])
-    .withMessage("Account type must be either user or business"),
   validate,
 ];
 
 // Reset password validation
 const validateResetPasswordRequest = [
   body("token").trim().notEmpty().withMessage("Reset token is required"),
-  body("accountType")
-    .isIn(["user", "business"])
-    .withMessage("Account type must be either user or business"),
   body("password")
     .isLength({ min: 6 })
     .withMessage("Password must be at least 6 characters"),
