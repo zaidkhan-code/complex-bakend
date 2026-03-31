@@ -7,7 +7,14 @@ const notFound = (req, res, next) => {
 
 // Error Handler middleware
 const errorHandler = (err, req, res, next) => {
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  let statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+
+  if (err?.name === "MulterError") {
+    statusCode = 400;
+  }
+  if (statusCode === 500 && /only image files allowed/i.test(err?.message || "")) {
+    statusCode = 400;
+  }
   
   res.status(statusCode).json({
     message: err.message,
