@@ -51,9 +51,8 @@ const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { 
-    fileSize: 50 * 1024 * 1024,  // 50MB limit per file
-    fieldSize: 50 * 1024 * 1024  // 50MB field size limit
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
@@ -178,7 +177,7 @@ router.post(
 router.post(
   "/templates/upload",
   checkPermission("templates", "create"),
-  upload.array("images", 10),
+  upload.single("image"),
   uploadTemplateImage,
 );
 
@@ -204,11 +203,7 @@ router.put(
   upload.single("image"),
   updatePhoto,
 );
-router.delete(
-  "/photos/:id",
-  checkPermission("photos", "delete"),
-  deletePhoto,
-);
+router.delete("/photos/:id", checkPermission("photos", "delete"), deletePhoto);
 
 // ---------------- ADMIN MANAGEMENT ----------------
 router.post("/make-admin", checkPermission("roles", "edit"), makeAdmin);

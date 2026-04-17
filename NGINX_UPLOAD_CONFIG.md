@@ -1,9 +1,11 @@
 # Nginx Configuration for Large File Uploads
 
 ## Problem
+
 Getting **413 Request Entity Too Large** error when uploading files.
 
 ## Solution
+
 Nginx has a default `client_max_body_size` of **1MB**, which blocks large uploads. You need to increase this limit.
 
 ---
@@ -11,6 +13,7 @@ Nginx has a default `client_max_body_size` of **1MB**, which blocks large upload
 ## Nginx Configuration Steps
 
 ### 1. Find Your Nginx Config File
+
 ```bash
 # Common locations:
 /etc/nginx/nginx.conf
@@ -24,6 +27,7 @@ Nginx has a default `client_max_body_size` of **1MB**, which blocks large upload
 Add/modify these lines in the appropriate location:
 
 #### **Option A: Global Level** (affects all sites)
+
 Edit `/etc/nginx/nginx.conf` in the `http` block:
 
 ```nginx
@@ -31,7 +35,7 @@ http {
     ...
     # Increase max upload size to 100MB
     client_max_body_size 100M;
-    
+
     # Increase timeouts for large uploads
     proxy_connect_timeout 300s;
     proxy_send_timeout 300s;
@@ -42,22 +46,23 @@ http {
 ```
 
 #### **Option B: Server Block Level** (specific to one domain)
+
 Edit `/etc/nginx/conf.d/default.conf` or `/etc/nginx/sites-available/default`:
 
 ```nginx
 server {
     listen 80;
     server_name api.complisk.com;
-    
+
     # Increase max upload size to 100MB
     client_max_body_size 100M;
-    
+
     # Increase timeouts for large uploads
     proxy_connect_timeout 300s;
     proxy_send_timeout 300s;
     proxy_read_timeout 300s;
     send_timeout 300s;
-    
+
     location /api/ {
         proxy_pass http://localhost:5000;
         proxy_set_header Host $host;
@@ -69,16 +74,17 @@ server {
 ```
 
 #### **Option C: Location Block Level** (specific to upload endpoint)
+
 ```nginx
 location /api/admin/templates/upload {
     client_max_body_size 100M;
-    
+
     proxy_pass http://localhost:5000;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    
+
     # Increase timeouts
     proxy_connect_timeout 300s;
     proxy_send_timeout 300s;
@@ -87,17 +93,20 @@ location /api/admin/templates/upload {
 ```
 
 ### 3. Verify Syntax
+
 ```bash
 sudo nginx -t
 ```
 
 Expected output:
+
 ```
 nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 nginx: configuration file /etc/nginx/nginx.conf test is successful
 ```
 
 ### 4. Reload Nginx
+
 ```bash
 sudo systemctl reload nginx
 # OR
@@ -108,10 +117,10 @@ sudo service nginx reload
 
 ## Summary of Configuration
 
-| Parameter | Backend (app.js) | Backend (multer) | Nginx |
-|-----------|------------------|------------------|-------|
-| **Limit** | 50MB | 50MB per file | 100MB |
-| **Location** | express.json() | multer config | client_max_body_size |
+| Parameter    | Backend (app.js) | Backend (multer) | Nginx                |
+| ------------ | ---------------- | ---------------- | -------------------- |
+| **Limit**    | 50MB             | 50MB per file    | 100MB                |
+| **Location** | express.json()   | multer config    | client_max_body_size |
 
 ---
 
@@ -134,19 +143,19 @@ curl -X POST \
 
 ## Troubleshooting
 
-| Error | Solution |
-|-------|----------|
-| Still getting 413 | Check if nginx reloaded properly: `sudo service nginx status` |
-| Large uploads timeout | Increase `proxy_read_timeout` in nginx (currently 300s) |
-| Multiple files fail | Reduce number of files per upload or increase all limits further |
-| Connection reset | Increase `send_timeout` in nginx |
+| Error                 | Solution                                                         |
+| --------------------- | ---------------------------------------------------------------- |
+| Still getting 413     | Check if nginx reloaded properly: `sudo service nginx status`    |
+| Large uploads timeout | Increase `proxy_read_timeout` in nginx (currently 300s)          |
+| Multiple files fail   | Reduce number of files per upload or increase all limits further |
+| Connection reset      | Increase `send_timeout` in nginx                                 |
 
 ---
 
 ## Why These Values?
 
 - **50MB Express limit**: Handles JSON requests + file metadata
-- **50MB Multer per file**: Supports individual large images  
+- **50MB Multer per file**: Supports individual large images
 - **100MB Nginx limit**: Allows uploading up to 10 files × 10MB each with overhead
 - **300s timeouts**: Prevents connection drops during large transfers
 

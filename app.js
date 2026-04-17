@@ -29,7 +29,8 @@ const corsOptions = {
     // Allow non-browser requests (no Origin header)
     if (!origin) return callback(null, true);
 
-    if (allowedOriginSet.has(normalizeOrigin(origin))) return callback(null, true);
+    if (allowedOriginSet.has(normalizeOrigin(origin)))
+      return callback(null, true);
     console.log(`Blocked CORS request from origin: ${origin}`, allowedOrigins);
 
     // Block unknown origins (browser will show CORS error)

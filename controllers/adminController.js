@@ -888,8 +888,8 @@ const getAdminDashboard = async (req, res) => {
 // @access  Private (Admin)
 const uploadTemplateImage = async (req, res) => {
   try {
-    if (!req.files || !req.files.length) {
-      return res.status(400).json({ message: "No images provided" });
+    if (!req.file) {
+      return res.status(400).json({ message: "No image provided" });
     }
 
     const normalizeTemplateName = (fileName = "") => {
@@ -902,83 +902,43 @@ const uploadTemplateImage = async (req, res) => {
       return sanitized || "template";
     };
 
-    const createdTemplates = [];
-    const failedUploads = [];
-    const uploadBatchTimestamp = Date.now();
-    const concurrencyLimit = Math.min(3, req.files.length);
-    let nextIndex = 0;
+    try {
+      const cloudinaryResult = await uploadImageToCloudinary(
+        req.file.buffer,
+        "templates",
+        {
+          filename: req.file.originalname || "template",
+          mimeType: req.file.mimetype || "application/octet-stream",
+        },
+      );
 
-    const uploadNextTemplate = async () => {
-      while (nextIndex < req.files.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        const file = req.files[currentIndex];
-
-        try {
-          const cloudinaryResult = await uploadImageToCloudinary(
-            file.buffer,
-            "templates",
-            {
-              filename: file.originalname || `template-${currentIndex + 1}`,
-              mimeType: file.mimetype || "application/octet-stream",
-            },
-          );
-
-          if (!cloudinaryResult.success) {
-            failedUploads.push({
-              fileName: file.originalname,
-              reason: cloudinaryResult.error || "Cloudinary upload failed",
-            });
-            continue;
-          }
-
-          const template = await Template.create({
-            name: `${normalizeTemplateName(file.originalname)}-${uploadBatchTimestamp}-${currentIndex + 1}`,
-            imageUrl: cloudinaryResult.data.url,
-            cloudinaryPublicId: cloudinaryResult.data.publicId,
-            isDefault: false,
-          });
-
-          createdTemplates.push({
-            id: template.id,
-            name: template.name,
-            imageUrl: template.imageUrl,
-            cloudinaryPublicId: template.cloudinaryPublicId,
-          });
-        } catch (error) {
-          failedUploads.push({
-            fileName: file.originalname,
-            reason: error?.message || "Upload failed",
-          });
-        }
+      if (!cloudinaryResult.success) {
+        return res.status(400).json({
+          message: cloudinaryResult.error || "Cloudinary upload failed",
+        });
       }
-    };
 
-    await Promise.all(
-      Array.from({ length: concurrencyLimit }, () => uploadNextTemplate()),
-    );
+      const template = await Template.create({
+        name: `${normalizeTemplateName(req.file.originalname)}-${Date.now()}`,
+        imageUrl: cloudinaryResult.data.url,
+        cloudinaryPublicId: cloudinaryResult.data.publicId,
+        isDefault: false,
+      });
 
-    if (!createdTemplates.length) {
-      return res.status(502).json({
-        message: "All template uploads failed. Please try again.",
-        uploadedCount: 0,
-        failedCount: failedUploads.length,
-        failedUploads,
+      res.status(201).json({
+        message: "Template uploaded successfully",
+        id: template.id,
+        name: template.name,
+        imageUrl: template.imageUrl,
+        cloudinaryPublicId: template.cloudinaryPublicId,
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error?.message || "Upload failed",
       });
     }
-
-    const hasFailures = failedUploads.length > 0;
-
-    res.status(hasFailures ? 207 : 201).json({
-      message: hasFailures
-        ? "Some templates uploaded, but some failed"
-        : "Templates uploaded successfully",
-      templates: createdTemplates,
-      uploadedCount: createdTemplates.length,
-      failedCount: failedUploads.length,
-      failedUploads,
-    });
   } catch (error) {
+    console.error("Error in uploadTemplateImage:", error);
     res.status(500).json({ message: error.message });
   }
 };
