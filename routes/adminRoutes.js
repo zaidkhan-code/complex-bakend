@@ -51,7 +51,10 @@ const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for photos
+  limits: { 
+    fileSize: 50 * 1024 * 1024,  // 50MB limit per file
+    fieldSize: 50 * 1024 * 1024  // 50MB field size limit
+  },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
     else cb(new Error("Only image files allowed"));

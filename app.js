@@ -44,15 +44,16 @@ app.options("*", cors(corsOptions));
 app.set("trust proxy", true);
 
 // Body parser middleware (except for webhook route)
+// Increased limits to handle file uploads and large payloads
 app.use((req, res, next) => {
   if (req.originalUrl === "/api/payment/webhook") {
     next();
   } else {
-    express.json()(req, res, next);
+    express.json({ limit: "50mb" })(req, res, next);
   }
 });
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ limit: "50mb", extended: false }));
 
 // Setup model relationships FIRST (before routes use them)
 setupModelRelationships();
