@@ -15,7 +15,7 @@ const {
   toggleBusinessAutoApprove,
   createPromotionForBusiness,
   getAdminDashboard,
-  uploadTemplateImage,
+  saveTemplateImage,
   getAllTemplates,
   updateAdminRole,
   makeAdmin,
@@ -174,11 +174,11 @@ router.post(
 );
 
 // ---------------- TEMPLATES ----------------
+// Frontend uploads to Cloudinary directly, then saves to DB via this endpoint
 router.post(
-  "/templates/upload",
+  "/templates/save",
   checkPermission("templates", "create"),
-  upload.single("image"),
-  uploadTemplateImage,
+  saveTemplateImage,
 );
 
 router.get("/templates", checkPermission("templates", "view"), getAllTemplates);

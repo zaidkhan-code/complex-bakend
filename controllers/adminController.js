@@ -129,13 +129,7 @@ const getPromotionWithRelations = async (promotionId) => {
       {
         model: Business,
         as: "business",
-        attributes: [
-          "id",
-          "name",
-          "email",
-          "autoApprovePromotions",
-          "status",
-        ],
+        attributes: ["id", "name", "email", "autoApprovePromotions", "status"],
         required: false,
       },
       {
@@ -372,7 +366,8 @@ const getAllBusinesses = async (req, res) => {
       const expiredIds = [];
       for (const sub of activeSubscriptions) {
         const endDate = sub?.endDate ? new Date(sub.endDate) : null;
-        const isExpired = endDate && !Number.isNaN(endDate.getTime()) && endDate < now;
+        const isExpired =
+          endDate && !Number.isNaN(endDate.getTime()) && endDate < now;
         if (isExpired) {
           expiredIds.push(sub.id);
           continue;
@@ -586,8 +581,6 @@ const grantBusinessSubscription = async (req, res) => {
         },
       ],
     });
-
-   
 
     res.json({
       message: "Subscription updated successfully",
@@ -883,17 +876,25 @@ const getAdminDashboard = async (req, res) => {
   }
 };
 
-// @desc    Upload template image
-// @route   POST /api/admin/templates/upload
+// @desc    Save template with Cloudinary URL
+// @route   POST /api/admin/templates/save
 // @access  Private (Admin)
-const uploadTemplateImage = async (req, res) => {
+const saveTemplateImage = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "No image provided" });
+    const { name, imageUrl } = req.body;
+
+    // Validate input
+    if (!name || !imageUrl) {
+      return res
+        .status(400)
+        .json({ message: "Template name and image URL are required" });
     }
 
+    // Normalize template name
     const normalizeTemplateName = (fileName = "") => {
-      const rawBase = String(fileName).replace(/\.[^/.]+$/, "").trim();
+      const rawBase = String(fileName)
+        .replace(/\.[^/.]+$/, "")
+        .trim();
       const sanitized = rawBase
         .replace(/[^a-zA-Z0-9\s-_]/g, "")
         .replace(/\s+/g, "-")
@@ -902,43 +903,22 @@ const uploadTemplateImage = async (req, res) => {
       return sanitized || "template";
     };
 
-    try {
-      const cloudinaryResult = await uploadImageToCloudinary(
-        req.file.buffer,
-        "templates",
-        {
-          filename: req.file.originalname || "template",
-          mimeType: req.file.mimetype || "application/octet-stream",
-        },
-      );
+    // Create template with Cloudinary URL
+    const template = await Template.create({
+      name: `${normalizeTemplateName(name)}-${Date.now()}`,
+      imageUrl: imageUrl,
+      cloudinaryPublicId: null,
+      isDefault: false,
+    });
 
-      if (!cloudinaryResult.success) {
-        return res.status(400).json({
-          message: cloudinaryResult.error || "Cloudinary upload failed",
-        });
-      }
-
-      const template = await Template.create({
-        name: `${normalizeTemplateName(req.file.originalname)}-${Date.now()}`,
-        imageUrl: cloudinaryResult.data.url,
-        cloudinaryPublicId: cloudinaryResult.data.publicId,
-        isDefault: false,
-      });
-
-      res.status(201).json({
-        message: "Template uploaded successfully",
-        id: template.id,
-        name: template.name,
-        imageUrl: template.imageUrl,
-        cloudinaryPublicId: template.cloudinaryPublicId,
-      });
-    } catch (error) {
-      res.status(500).json({
-        message: error?.message || "Upload failed",
-      });
-    }
+    res.status(201).json({
+      message: "Template saved successfully",
+      id: template.id,
+      name: template.name,
+      imageUrl: template.imageUrl,
+    });
   } catch (error) {
-    console.error("Error in uploadTemplateImage:", error);
+    console.error("Error in saveTemplateImage:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -1678,7 +1658,7 @@ module.exports = {
   updatePromotion,
   createPromotionForBusiness,
   getAdminDashboard,
-  uploadTemplateImage,
+  saveTemplateImage,
   getAllTemplates,
   deleteTemplate,
   createAdminUser,
