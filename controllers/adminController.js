@@ -881,7 +881,7 @@ const getAdminDashboard = async (req, res) => {
 // @access  Private (Admin)
 const saveTemplateImage = async (req, res) => {
   try {
-    const { name, imageUrl } = req.body;
+    const { name, imageUrl, cloudinaryPublicId } = req.body;
 
     // Validate input
     if (!name || !imageUrl) {
@@ -903,11 +903,11 @@ const saveTemplateImage = async (req, res) => {
       return sanitized || "template";
     };
 
-    // Create template with Cloudinary URL
+    // Create template with Cloudinary URL and Public ID
     const template = await Template.create({
       name: `${normalizeTemplateName(name)}-${Date.now()}`,
       imageUrl: imageUrl,
-      cloudinaryPublicId: null,
+      cloudinaryPublicId: cloudinaryPublicId || null,
       isDefault: false,
     });
 
@@ -916,6 +916,7 @@ const saveTemplateImage = async (req, res) => {
       id: template.id,
       name: template.name,
       imageUrl: template.imageUrl,
+      cloudinaryPublicId: template.cloudinaryPublicId,
     });
   } catch (error) {
     console.error("Error in saveTemplateImage:", error);
