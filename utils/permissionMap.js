@@ -27,5 +27,7 @@ module.exports = {
 
   templates: ["view", "create", "edit", "delete"],
 
+  photos: ["view", "create", "edit", "delete"],
+
   categories: ["view", "create", "edit", "delete"],
 };

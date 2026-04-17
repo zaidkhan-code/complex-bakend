@@ -24,6 +24,12 @@ const {
   createAdminUser,
   getUserPermissions,
 } = require("../controllers/adminController");
+const {
+  getAdminPhotos,
+  createPhoto,
+  updatePhoto,
+  deletePhoto,
+} = require("../controllers/photoController");
 
 const {
   listSupportMessages,
@@ -45,7 +51,7 @@ const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for photos
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
     else cb(new Error("Only image files allowed"));
@@ -179,6 +185,26 @@ router.delete(
   "/templates/:id",
   checkPermission("templates", "delete"),
   deleteTemplate,
+);
+
+// ---------------- PHOTOS ----------------
+router.get("/photos", checkPermission("photos", "view"), getAdminPhotos);
+router.post(
+  "/photos",
+  checkPermission("photos", "create"),
+  upload.single("image"),
+  createPhoto,
+);
+router.put(
+  "/photos/:id",
+  checkPermission("photos", "edit"),
+  upload.single("image"),
+  updatePhoto,
+);
+router.delete(
+  "/photos/:id",
+  checkPermission("photos", "delete"),
+  deletePhoto,
 );
 
 // ---------------- ADMIN MANAGEMENT ----------------

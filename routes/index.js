@@ -14,11 +14,13 @@ const roleRoutes = require("./roleRoutes");
 const wishlistRoutes = require("./wishlistRoutes");
 const supportRoutes = require("./supportRoutes");
 const businessTaggingRoutes = require("./businessTaggingRoutes");
+const photoRoutes = require("./photoRoutes");
 
 // Import models
 const Business = require("../models/Business");
 const Promotion = require("../models/Promotion");
 const Template = require("../models/Template");
+const Photo = require("../models/Photo");
 const User = require("../models/User");
 const Role = require("../models/Role");
 const Wishlist = require("../models/Wishlist");
@@ -188,6 +190,7 @@ const setupRoutes = (app) => {
   app.use("/api/wishlist", wishlistRoutes);
   app.use("/api/support", supportRoutes);
   app.use("/api/business-tagging", businessTaggingRoutes);
+  app.use("/api/photos", photoRoutes);
   app.get("/api/locationtest", async (req, res) => {
     try {
       const ip =
@@ -228,4 +231,5 @@ module.exports = {
   wishlistRoutes,
   supportRoutes,
   businessTaggingRoutes,
+  photoRoutes,
 };
