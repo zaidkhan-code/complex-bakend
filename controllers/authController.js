@@ -348,13 +348,14 @@ const registerBusiness = async (req, res) => {
     const business = await runDbOperation(
       () =>
         withEmailRegistrationLock(email, async ({ transaction }) => {
-          const { userAccount, businessAccount } = await findAccountByEmail({
+          const { businessAccount } = await findAccountByEmail({
             email,
             transaction,
           });
 
-          if (userAccount || businessAccount) {
-            throw createClientError("Email already exists ", 400);
+          // Only check if business account already exists, allow if email exists in User model
+          if (businessAccount) {
+            throw createClientError("Email already exists", 400);
           }
 
           return Business.create(
@@ -362,7 +363,7 @@ const registerBusiness = async (req, res) => {
               name,
               email: normalizedEmail,
               password,
-              phone,
+              phone: phone || null,
               categories,
               personName: personName || null,
               businessAddress: businessAddress || null,
@@ -469,10 +470,31 @@ const login = async (req, res) => {
       }),
     ]);
 
-    const consoleppp = userAccount ? userAccount : businessAccount;
-    console.log(consoleppp, "check business and user account please");
+    console.log(
+      { userAccount, businessAccount },
+      "check business and user account please",
+    );
 
-    // Priority: If email exists in User model, respond as user/admin/superadmin.
+    // Priority: If email exists in Business model, respond as business first
+    if (businessAccount) {
+      if (["blocked", "suspended"].includes(businessAccount.status)) {
+        return res.status(403).json({ message: "Account is blocked" });
+      }
+
+      const isMatch = await businessAccount.matchPassword(password);
+      if (!isMatch) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      const token = generateToken(businessAccount.id, "business");
+      return res.json({
+        ...businessAccount?.dataValues,
+        token,
+        accountType: "business",
+      });
+    }
+
+    // If no business account, check for user/admin account
     if (userAccount) {
       if (["blocked", "suspended"].includes(userAccount.status)) {
         return res.status(403).json({ message: "Account is blocked" });
@@ -531,25 +553,10 @@ const login = async (req, res) => {
       });
     }
 
-    if (businessAccount) {
-      if (["blocked", "suspended"].includes(businessAccount.status)) {
-        return res.status(403).json({ message: "Account is blocked" });
-      }
-
-      const isMatch = await businessAccount.matchPassword(password);
-      if (!isMatch) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-
-      const token = generateToken(businessAccount.id, "business");
-      return res.json({
-        ...businessAccount?.dataValues,
-        token,
-        accountType: "business",
-      });
-    }
-
-    return res.status(401).json({ message: "Invalid credentials" });
+    // Account not found
+    return res
+      .status(404)
+      .json({ message: "Account not found. Please register first." });
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ message: error?.message });

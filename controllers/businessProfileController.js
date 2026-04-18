@@ -123,10 +123,12 @@ const updateBusinessProfile = async (req, res) => {
 
     if (phone !== undefined) {
       const normalizedPhone = String(phone || "").trim();
-      if (!normalizedPhone) {
-        return res.status(400).json({ message: "Phone is required" });
+      // Phone is optional, only validate if provided
+      if (normalizedPhone) {
+        business.phone = normalizedPhone;
+      } else {
+        business.phone = null;
       }
-      business.phone = normalizedPhone;
     }
 
     if (personName !== undefined) {

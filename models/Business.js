@@ -28,7 +28,7 @@ const Business = sequelize.define(
     },
     phone: {
       type: DataTypes.STRING,
-      allowNull: false,
+      allowNull: true,
     },
     logoUrl: {
       type: DataTypes.TEXT,

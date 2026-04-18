@@ -26,7 +26,7 @@ const validateBusinessRegistration = [
   body("password")
     .isLength({ min: 6 })
     .withMessage("Password must be at least 6 characters"),
-  body("phone").trim().notEmpty().withMessage("Phone is required"),
+  body("phone").optional().trim(),
   validate,
 ];
 
